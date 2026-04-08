@@ -1,0 +1,40 @@
+{
+  "name": "compliment-sandwich",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "prisma:generate": "prisma generate",
+    "prisma:push": "prisma db push",
+    "prisma:seed": "tsx prisma/seed.ts"
+  },
+  "dependencies": {
+    "@paypal/paypal-js": "^8.0.0",
+    "@prisma/client": "^6.0.0",
+    "@stripe/react-stripe-js": "^3.5.0",
+    "@stripe/stripe-js": "^4.8.0",
+    "clsx": "^2.1.1",
+    "next": "^15.0.0",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0",
+    "server-only": "^0.0.1",
+    "stripe": "^18.0.0",
+    "twilio": "^5.4.1",
+    "twilio-video": "^2.34.0",
+    "zod": "^3.24.1"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.2",
+    "@types/react": "^19.0.2",
+    "@types/react-dom": "^19.0.2",
+    "@vitest/coverage-v8": "^3.0.5",
+    "prisma": "^6.0.0",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.2",
+    "vitest": "^3.0.5"
+  }
+}

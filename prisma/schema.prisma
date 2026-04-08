@@ -1,0 +1,183 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+enum ComplimentRequestStatus {
+  pending
+  payment_authorized
+  calling
+  answered
+  completed
+  failed
+  canceled
+}
+
+enum PaymentAttemptStatus {
+  requires_payment_method
+  authorized
+  captured
+  canceled
+  failed
+}
+
+enum CallAttemptStatus {
+  initiated
+  ringing
+  answered
+  completed
+  no_answer
+  busy
+  failed
+  dropped
+}
+
+enum PaymentProvider {
+  stripe
+  paypal
+}
+
+enum PaymentMethodType {
+  card
+  apple_pay
+  google_pay
+  venmo
+  unknown
+}
+
+enum LiveSessionStatus {
+  waiting_for_owner
+  waiting_for_customer
+  joined
+  disconnected
+  completed
+  failed
+}
+
+model ServiceAvailability {
+  id           Int      @id @default(1)
+  isAvailable  Boolean  @default(true)
+  ownerMessage String?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+}
+
+model AdminConfig {
+  id                                Int      @id @default(1)
+  destinationPhoneMask              String?
+  destinationPhoneOverrideEncrypted String?
+  allowPhoneOverride                Boolean  @default(false)
+  createdAt                         DateTime @default(now())
+  updatedAt                         DateTime @updatedAt
+}
+
+model ComplimentRequest {
+  id                  String                  @id @default(cuid())
+  clientRequestId     String                  @unique
+  customerPhoneE164   String?
+  customerPhoneMasked String?
+  amountCents         Int
+  status              ComplimentRequestStatus @default(pending)
+  publicMessage       String?
+  failureReason       String?
+  provider            PaymentProvider?
+  paymentMethodType   PaymentMethodType       @default(unknown)
+  createdAt           DateTime                @default(now())
+  updatedAt           DateTime                @updatedAt
+  answeredAt          DateTime?
+  completedAt         DateTime?
+  failedAt            DateTime?
+  canceledAt          DateTime?
+  paymentAttempts     PaymentAttempt[]
+  callAttempts        CallAttempt[]
+  liveSession         LiveSession?
+
+  @@index([status, createdAt])
+}
+
+model PaymentAttempt {
+  id                  String               @id @default(cuid())
+  complimentRequestId String
+  provider            PaymentProvider
+  methodType          PaymentMethodType    @default(unknown)
+  status              PaymentAttemptStatus @default(requires_payment_method)
+  amountCents         Int
+  currency            String               @default("usd")
+  authorizationId     String?
+  externalPaymentId   String?
+  idempotencyKey      String?
+  failureReason       String?
+  createdAt           DateTime             @default(now())
+  updatedAt           DateTime             @updatedAt
+  authorizedAt        DateTime?
+  capturedAt          DateTime?
+  canceledAt          DateTime?
+  complimentRequest   ComplimentRequest    @relation(fields: [complimentRequestId], references: [id], onDelete: Cascade)
+
+  @@index([complimentRequestId, status])
+}
+
+model CallAttempt {
+  id                  String            @id @default(cuid())
+  complimentRequestId String
+  twilioCallSid       String?           @unique
+  twilioChildCallSid  String?           @unique
+  status              CallAttemptStatus @default(initiated)
+  direction           String            @default("browser")
+  failureReason       String?
+  durationSeconds     Int?
+  roomName            String?
+  createdAt           DateTime          @default(now())
+  updatedAt           DateTime          @updatedAt
+  answeredAt          DateTime?
+  completedAt         DateTime?
+  complimentRequest   ComplimentRequest @relation(fields: [complimentRequestId], references: [id], onDelete: Cascade)
+
+  @@index([complimentRequestId, status])
+}
+
+model LiveSession {
+  id                   String            @id @default(cuid())
+  complimentRequestId  String            @unique
+  roomName             String            @unique
+  roomSid              String?           @unique
+  customerJoinKey      String            @unique
+  ownerIdentity        String
+  customerIdentity     String
+  status               LiveSessionStatus @default(waiting_for_owner)
+  customerRequestedVideo Boolean         @default(false)
+  ownerConnected       Boolean           @default(false)
+  customerConnected    Boolean           @default(false)
+  ownerVideoEnabled    Boolean           @default(true)
+  ownerAudioEnabled    Boolean           @default(true)
+  customerVideoEnabled Boolean           @default(false)
+  customerAudioEnabled Boolean           @default(true)
+  customerAudioMuted   Boolean           @default(false)
+  ownerJoinedAt        DateTime?
+  customerJoinedAt     DateTime?
+  ownerLeftAt          DateTime?
+  customerLeftAt       DateTime?
+  ownerJoinDeadlineAt  DateTime?
+  joinedAt             DateTime?
+  disconnectedAt       DateTime?
+  completedAt          DateTime?
+  endedReason          String?
+  createdAt            DateTime          @default(now())
+  updatedAt            DateTime          @updatedAt
+  complimentRequest    ComplimentRequest @relation(fields: [complimentRequestId], references: [id], onDelete: Cascade)
+
+  @@index([status, createdAt])
+}
+
+model RateLimitEvent {
+  id        String   @id @default(cuid())
+  routeKey  String
+  actorHash String
+  createdAt DateTime @default(now())
+
+  @@index([routeKey, actorHash, createdAt])
+}
