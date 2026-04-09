@@ -80,8 +80,14 @@ type RoomUiErrorBoundaryState = {
 type AttachableTrack = {
   kind: string;
   attach: () => HTMLElement;
-  detach: () => HTMLElement[];
+  detach: (element?: HTMLElement) => HTMLElement | HTMLElement[];
   sid?: string;
+};
+
+type TrackBinding = {
+  element: HTMLElement;
+  sid: string;
+  track: AttachableTrack;
 };
 
 const VIDEO_CONSTRAINTS = {
@@ -109,24 +115,94 @@ function formatExactError(error: unknown, fallbackMessage: string) {
   return fallbackMessage;
 }
 
-function clearContainer(container: HTMLDivElement | null) {
-  if (!container) {
+function normalizeDetachedElements(elements: HTMLElement | HTMLElement[] | undefined) {
+  if (!elements) {
+    return [];
+  }
+
+  return Array.isArray(elements) ? elements : [elements];
+}
+
+function safeRemoveNode(node: ChildNode | null, context: string) {
+  if (!node) {
+    console.error("[Compliment Sandwich live room] remove skipped", {
+      context,
+      reason: "missing_node"
+    });
     return;
   }
 
-  container.innerHTML = "";
+  const parent = node.parentNode;
+  console.error("[Compliment Sandwich live room] remove start", {
+    context,
+    hasParent: Boolean(parent),
+    parentTag: parent instanceof HTMLElement ? parent.tagName : parent?.nodeName ?? null
+  });
+
+  if (!parent) {
+    console.error("[Compliment Sandwich live room] remove skipped", {
+      context,
+      reason: "stale_parent"
+    });
+    return;
+  }
+
+  if (!parent.contains(node)) {
+    console.error("[Compliment Sandwich live room] remove skipped", {
+      context,
+      reason: "parent_missing_child"
+    });
+    return;
+  }
+
+  try {
+    parent.removeChild(node);
+    console.error("[Compliment Sandwich live room] remove end", {
+      context,
+      status: "removed"
+    });
+  } catch (error) {
+    console.error("[Compliment Sandwich live room] remove failed", error, {
+      context
+    });
+  }
+}
+
+function clearContainer(container: HTMLDivElement | null, context: string) {
+  if (!container) {
+    console.error("[Compliment Sandwich live room] clear skipped", {
+      context,
+      reason: "missing_container"
+    });
+    return;
+  }
+
+  console.error("[Compliment Sandwich live room] clear start", {
+    context,
+    childCount: container.childNodes.length
+  });
+
+  Array.from(container.childNodes).forEach((node, index) => {
+    safeRemoveNode(node, `${context} child ${index}`);
+  });
+
+  console.error("[Compliment Sandwich live room] clear end", {
+    context,
+    childCount: container.childNodes.length
+  });
 }
 
 function attachMediaTrack(
   container: HTMLDivElement | null,
   track: AttachableTrack,
   options?: {
+    bindingRef?: { current: TrackBinding | null };
     muted?: boolean;
     context?: string;
   }
 ) {
   const context = options?.context ?? `${track.kind} track`;
-  console.error("[Compliment Sandwich live room] attachMediaTrack", {
+  console.error("[Compliment Sandwich live room] attach start", {
     context,
     containerReady: Boolean(container),
     kind: track.kind,
@@ -138,7 +214,29 @@ function attachMediaTrack(
   }
 
   const sid = track.sid ?? `${track.kind}-track`;
-  container.querySelectorAll(`[data-track-sid="${sid}"]`).forEach((node) => node.remove());
+  const binding = options?.bindingRef?.current ?? null;
+
+  if (
+    binding &&
+    binding.sid === sid &&
+    binding.track === track &&
+    binding.element.parentNode === container
+  ) {
+    console.error("[Compliment Sandwich live room] attach skipped", {
+      context,
+      reason: "already_attached",
+      sid
+    });
+    return true;
+  }
+
+  if (binding) {
+    detachMediaTrack(binding.track, `${context} replace existing`, {
+      bindingRef: options?.bindingRef
+    });
+  } else {
+    clearContainer(container, `${context} clear unattached leftovers`);
+  }
 
   let element: HTMLElement;
   try {
@@ -147,7 +245,7 @@ function attachMediaTrack(
     console.error("[Compliment Sandwich live room] track.attach() failed", error, {
       context,
       kind: track.kind,
-      trackSid: "sid" in track ? track.sid : null
+      trackSid: track.sid ?? null
     });
     throw error instanceof Error ? error : new Error(`${context}: track.attach() failed.`);
   }
@@ -162,32 +260,82 @@ function attachMediaTrack(
     element.muted = Boolean(options?.muted);
   }
 
-  if (track.kind === "video") {
-    clearContainer(container);
-  }
-
   try {
     container.appendChild(element);
   } catch (error) {
     console.error("[Compliment Sandwich live room] appendChild failed", error, {
       context,
       kind: track.kind,
-      trackSid: "sid" in track ? track.sid : null
+      trackSid: track.sid ?? null
     });
-    element.remove();
+    safeRemoveNode(element, `${context} append failure cleanup`);
     throw error instanceof Error ? error : new Error(`${context}: the media element could not be attached.`);
   }
+
+  if (options?.bindingRef) {
+    options.bindingRef.current = {
+      track,
+      sid,
+      element
+    };
+  }
+
+  console.error("[Compliment Sandwich live room] attach end", {
+    context,
+    sid,
+    parentMatchesContainer: element.parentNode === container
+  });
 
   return true;
 }
 
-function detachMediaTrack(track: AttachableTrack, context = `${track.kind} track`) {
-  console.error("[Compliment Sandwich live room] detachMediaTrack", {
+function detachMediaTrack(
+  track: AttachableTrack,
+  context = `${track.kind} track`,
+  options?: {
+    bindingRef?: { current: TrackBinding | null };
+  }
+) {
+  const binding = options?.bindingRef?.current ?? null;
+
+  console.error("[Compliment Sandwich live room] detach start", {
     context,
     kind: track.kind,
-    trackSid: track.sid ?? null
+    trackSid: track.sid ?? null,
+    hasBinding: Boolean(binding)
   });
-  track.detach().forEach((element) => element.remove());
+
+  if (options?.bindingRef && !binding) {
+    console.error("[Compliment Sandwich live room] detach skipped", {
+      context,
+      reason: "stale_binding"
+    });
+    return;
+  }
+
+  let detachedElements: HTMLElement[] = [];
+  try {
+    detachedElements = normalizeDetachedElements(binding ? track.detach(binding.element) : track.detach());
+  } catch (error) {
+    console.error("[Compliment Sandwich live room] detach failed", error, {
+      context,
+      trackSid: track.sid ?? null
+    });
+    detachedElements = binding?.element ? [binding.element] : [];
+  }
+
+  detachedElements.forEach((element, index) => {
+    safeRemoveNode(element, `${context} detached ${index}`);
+  });
+
+  if (options?.bindingRef && options.bindingRef.current?.track === track) {
+    options.bindingRef.current = null;
+  }
+
+  console.error("[Compliment Sandwich live room] detach end", {
+    context,
+    detachedCount: detachedElements.length
+  });
 }
 
 function isTerminal(snapshot: LiveSessionSnapshot | null) {
@@ -206,7 +354,7 @@ function stopLocalTracks(tracks: ConnectableLocalTrack[]) {
   tracks.forEach((track) => {
     try {
       track.stop();
-      track.detach().forEach((element) => element.remove());
+      detachMediaTrack(track as unknown as AttachableTrack, `stopLocalTracks ${track.kind}`);
     } catch {
       // best-effort cleanup only
     }
@@ -338,6 +486,9 @@ function CallPageClientInner({ requestId, role, joinKey }: LiveCallPageClientPro
   const localPreviewRef = useRef<HTMLDivElement | null>(null);
   const remoteVideoRef = useRef<HTMLDivElement | null>(null);
   const remoteAudioRef = useRef<HTMLDivElement | null>(null);
+  const localPreviewBindingRef = useRef<TrackBinding | null>(null);
+  const remoteVideoBindingRef = useRef<TrackBinding | null>(null);
+  const remoteAudioBindingRef = useRef<TrackBinding | null>(null);
 
   const reportRoomError = useCallback((context: string, error: unknown, fallbackMessage: string) => {
     const exactMessage = formatExactError(error, fallbackMessage);
@@ -611,15 +762,36 @@ function CallPageClientInner({ requestId, role, joinKey }: LiveCallPageClientPro
   }
 
   function clearRemoteMedia(suppressState = false) {
-    clearContainer(remoteVideoRef.current);
-    clearContainer(remoteAudioRef.current);
+    if (remoteVideoBindingRef.current) {
+      detachMediaTrack(remoteVideoBindingRef.current.track, `${role} clear remote video`, {
+        bindingRef: remoteVideoBindingRef
+      });
+    } else {
+      clearContainer(remoteVideoRef.current, `${role} clear remote video host`);
+    }
+
+    if (remoteAudioBindingRef.current) {
+      detachMediaTrack(remoteAudioBindingRef.current.track, `${role} clear remote audio`, {
+        bindingRef: remoteAudioBindingRef
+      });
+    } else {
+      clearContainer(remoteAudioRef.current, `${role} clear remote audio host`);
+    }
+
     if (!suppressState && mountedRef.current) {
       setRemoteVideoAttached(false);
     }
   }
 
   function clearLocalPreview(suppressState = false) {
-    clearContainer(localPreviewRef.current);
+    if (localPreviewBindingRef.current) {
+      detachMediaTrack(localPreviewBindingRef.current.track, `${role} clear local preview`, {
+        bindingRef: localPreviewBindingRef
+      });
+    } else {
+      clearContainer(localPreviewRef.current, `${role} clear local preview host`);
+    }
+
     if (!suppressState && mountedRef.current) {
       setLocalPreviewAttached(false);
     }
@@ -635,7 +807,10 @@ function CallPageClientInner({ requestId, role, joinKey }: LiveCallPageClientPro
               publication.track.stop();
             }
             if ("detach" in publication.track && typeof publication.track.detach === "function") {
-              publication.track.detach().forEach((element) => element.remove());
+              const localTrack = publication.track as unknown as AttachableTrack;
+              detachMediaTrack(localTrack, `${role} teardown local ${publication.track.kind}`, {
+                bindingRef: localPreviewBindingRef.current?.track === localTrack ? localPreviewBindingRef : undefined
+              });
             }
           } catch (error) {
             console.error(`[Compliment Sandwich live room][${role}] Failed to tear down local track`, error);
@@ -686,6 +861,7 @@ function CallPageClientInner({ requestId, role, joinKey }: LiveCallPageClientPro
 
       if (track.kind === "video") {
         const attached = attachMediaTrack(remoteVideoRef.current, track as unknown as AttachableTrack, {
+          bindingRef: remoteVideoBindingRef,
           context: `${role} remote video`,
           muted: false
         });
@@ -697,6 +873,7 @@ function CallPageClientInner({ requestId, role, joinKey }: LiveCallPageClientPro
 
       if (track.kind === "audio") {
         attachMediaTrack(remoteAudioRef.current, track as unknown as AttachableTrack, {
+          bindingRef: remoteAudioBindingRef,
           context: `${role} remote audio`,
           muted: false
         });
@@ -708,11 +885,34 @@ function CallPageClientInner({ requestId, role, joinKey }: LiveCallPageClientPro
 
   function detachRemoteTrack(track: RemoteTrack) {
     try {
-      if (track.kind === "audio" || track.kind === "video") {
-        detachMediaTrack(track as unknown as AttachableTrack, `${role} remote ${track.kind}`);
+      if (track.kind === "video") {
+        const remoteVideoTrack = track as unknown as AttachableTrack;
+        if (remoteVideoBindingRef.current?.track === remoteVideoTrack) {
+          detachMediaTrack(remoteVideoTrack, `${role} remote video`, {
+            bindingRef: remoteVideoBindingRef
+          });
+        } else {
+          console.error(`[Compliment Sandwich live room][${role}] Skipping stale remote video detach`, {
+            trackSid: "sid" in track ? track.sid : null
+          });
+        }
+        if (mountedRef.current) {
+          setRemoteVideoAttached(false);
+        }
+        return;
       }
-      if (track.kind === "video" && mountedRef.current) {
-        setRemoteVideoAttached(false);
+
+      if (track.kind === "audio") {
+        const remoteAudioTrack = track as unknown as AttachableTrack;
+        if (remoteAudioBindingRef.current?.track === remoteAudioTrack) {
+          detachMediaTrack(remoteAudioTrack, `${role} remote audio`, {
+            bindingRef: remoteAudioBindingRef
+          });
+        } else {
+          console.error(`[Compliment Sandwich live room][${role}] Skipping stale remote audio detach`, {
+            trackSid: "sid" in track ? track.sid : null
+          });
+        }
       }
     } catch (error) {
       reportRoomError("Remote track detach failed", error, "A participant media track could not be cleaned up.");
@@ -979,7 +1179,6 @@ function CallPageClientInner({ requestId, role, joinKey }: LiveCallPageClientPro
     try {
       if (existingTrack && existingTrack.isEnabled) {
         existingTrack.disable();
-        detachMediaTrack(existingTrack, `${role} customer local video toggle off`);
         if (mountedRef.current) {
           setCustomerVideoEnabled(false);
           setLocalPreviewTrack(null);
@@ -1088,13 +1287,16 @@ function CallPageClientInner({ requestId, role, joinKey }: LiveCallPageClientPro
   }, [requestId, role]);
 
   useEffect(() => {
+    const previewContainer = localPreviewRef.current;
+
     if (!localPreviewTrack) {
       clearLocalPreview();
       return;
     }
 
     try {
-      const attached = attachMediaTrack(localPreviewRef.current, localPreviewTrack, {
+      const attached = attachMediaTrack(previewContainer, localPreviewTrack, {
+        bindingRef: localPreviewBindingRef,
         context: `${role} local preview`,
         muted: true
       });
@@ -1110,11 +1312,16 @@ function CallPageClientInner({ requestId, role, joinKey }: LiveCallPageClientPro
 
     return () => {
       try {
-        detachMediaTrack(localPreviewTrack, `${role} local preview cleanup`);
+        detachMediaTrack(localPreviewTrack, `${role} local preview cleanup`, {
+          bindingRef: localPreviewBindingRef
+        });
       } catch (error) {
         console.error(`[Compliment Sandwich live room][${role}] Local preview cleanup failed`, error);
       }
-      clearContainer(localPreviewRef.current);
+      clearContainer(previewContainer, `${role} local preview cleanup host`);
+      if (mountedRef.current) {
+        setLocalPreviewAttached(false);
+      }
     };
   }, [localPreviewTrack, reportRoomError, role]);
 
@@ -1269,7 +1476,8 @@ function CallPageClientInner({ requestId, role, joinKey }: LiveCallPageClientPro
       <section className="media-grid">
         <div className="surface stack">
           <strong>{role === LIVE_SESSION_OWNER_ROLE ? "Owner Preview" : "You"}</strong>
-          <div className="media-frame" ref={localPreviewRef}>
+          <div className="media-frame">
+            <div className="media-track-host" ref={localPreviewRef} />
             {!localPreviewAttached ? <div className="media-placeholder">{localPlaceholder}</div> : null}
           </div>
           <div className="tiny muted">{localPresenceNote}</div>
@@ -1277,7 +1485,8 @@ function CallPageClientInner({ requestId, role, joinKey }: LiveCallPageClientPro
 
         <div className="surface stack">
           <strong>{role === LIVE_SESSION_OWNER_ROLE ? "Customer" : "Owner"}</strong>
-          <div className="media-frame" ref={remoteVideoRef}>
+          <div className="media-frame">
+            <div className="media-track-host" ref={remoteVideoRef} />
             {!remoteVideoAttached ? <div className="media-placeholder">{remotePlaceholder}</div> : null}
           </div>
           <div ref={remoteAudioRef} className="remote-audio-shell" />
@@ -1287,15 +1496,4 @@ function CallPageClientInner({ requestId, role, joinKey }: LiveCallPageClientPro
     </div>
   );
 }
-
-
-
-
-
-
-
-
-
-
-
 
