@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 
 import { afterAll, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { prisma } from "@/src/server/prisma";
+import { prisma } from "@/lib/prisma";
 import { ensureBootstrapData } from "@/src/server/bootstrap";
 import { setAvailability } from "@/src/server/services/availability";
 import { createComplimentService } from "@/src/server/services/compliment-service";
@@ -217,3 +217,4 @@ describe("compliment service live sessions", () => {
     ).rejects.toThrow("Amount must be at least $0.50.");
   });
 });
+

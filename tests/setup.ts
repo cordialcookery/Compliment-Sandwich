@@ -1,12 +1,36 @@
 import fs from "node:fs";
 import path from "node:path";
 
-const rootDir = path.resolve(process.cwd());
-const prismaDir = path.join(rootDir, "prisma");
-const sourceDb = path.join(prismaDir, "dev.db");
-const testDb = path.join(prismaDir, "test.db");
+function readEnvValue(filePath: string, key: string) {
+  if (!fs.existsSync(filePath)) {
+    return undefined;
+  }
 
-process.env.DATABASE_URL = "file:./test.db";
+  const content = fs.readFileSync(filePath, "utf8");
+  const line = content
+    .split(/\r?\n/)
+    .find((entry) => entry.startsWith(`${key}=`));
+
+  if (!line) {
+    return undefined;
+  }
+
+  const rawValue = line.slice(key.length + 1).trim();
+  return rawValue.replace(/^"|"$/g, "");
+}
+
+const rootDir = path.resolve(process.cwd());
+const databaseUrl =
+  process.env.TEST_DATABASE_URL ||
+  process.env.DATABASE_URL ||
+  readEnvValue(path.join(rootDir, ".env.local"), "DATABASE_URL") ||
+  readEnvValue(path.join(rootDir, ".env"), "DATABASE_URL");
+
+if (!databaseUrl) {
+  throw new Error("Set TEST_DATABASE_URL or DATABASE_URL before running tests.");
+}
+
+process.env.DATABASE_URL = databaseUrl;
 process.env.APP_URL = process.env.APP_URL || "http://localhost:3000";
 process.env.ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || "owner-password";
 process.env.ADMIN_SESSION_SECRET = process.env.ADMIN_SESSION_SECRET || "super-secret-session-key-1234";
@@ -23,9 +47,3 @@ process.env.PAYPAL_CLIENT_ID = process.env.PAYPAL_CLIENT_ID || "paypal-client-id
 process.env.PAYPAL_CLIENT_SECRET = process.env.PAYPAL_CLIENT_SECRET || "paypal-client-secret";
 process.env.NEXT_PUBLIC_PAYPAL_CLIENT_ID = process.env.NEXT_PUBLIC_PAYPAL_CLIENT_ID || "paypal-client-id";
 process.env.PAYPAL_WEBHOOK_ID = process.env.PAYPAL_WEBHOOK_ID || "paypal-webhook-id";
-
-if (!fs.existsSync(sourceDb)) {
-  throw new Error("prisma/dev.db does not exist yet. Run `npm run prisma:push` before `npm test`.");
-}
-
-fs.copyFileSync(sourceDb, testDb);

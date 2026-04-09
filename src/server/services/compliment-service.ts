@@ -25,7 +25,7 @@ import {
 import { HttpError } from "@/src/lib/http";
 import { maskPhoneNumber, normalizeUsPhone } from "@/src/lib/phone";
 import { ensureBootstrapData } from "@/src/server/bootstrap";
-import { prisma } from "@/src/server/prisma";
+import { prisma } from "@/lib/prisma";
 import { paymentGateways } from "@/src/server/payments";
 import { assertCanAcceptComplimentRequests, getPublicAvailability } from "@/src/server/services/availability";
 
@@ -997,4 +997,5 @@ export function createComplimentService(overrides: Partial<ServiceDependencies> 
 }
 
 export const complimentService = createComplimentService();
+
 

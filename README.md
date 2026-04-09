@@ -113,7 +113,9 @@ That split keeps the fail-closed logic explicit: room creation does not charge, 
 1. Create a Vercel project from this repo.
 2. Add every `.env.example` variable to Vercel.
 3. Use a production database instead of SQLite for real deployment.
-4. Point Stripe webhooks to `/api/webhooks/stripe`.
+4. Local development can use a direct database URL, but Vercel production should use Supabase''s pooled connection string instead of the direct `5432` host.
+5. Prefer the pooled or transaction-mode Supabase Postgres URL for Prisma in production to avoid connection exhaustion.
+6. Point Stripe webhooks to `/api/webhooks/stripe`.
 5. Point PayPal webhooks to `/api/webhooks/paypal`.
 6. Configure Twilio Video room status callbacks to hit `/api/webhooks/twilio/video` through the app-created room config.
 7. Verify Apple Pay and Google Pay in Stripe for the production domain.
@@ -126,3 +128,4 @@ That split keeps the fail-closed logic explicit: room creation does not charge, 
 - Rate limiting and client request ids protect against duplicate submits.
 - Legacy Twilio voice endpoints are left in the app as disabled stubs so old phone-flow URLs fail clearly instead of silently charging.
 - When in doubt, the code does not charge the customer.
+

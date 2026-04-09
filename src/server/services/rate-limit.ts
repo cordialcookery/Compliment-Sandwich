@@ -3,7 +3,7 @@ import "server-only";
 import { RATE_LIMIT_MAX_ATTEMPTS, RATE_LIMIT_WINDOW_MINUTES } from "@/src/lib/constants";
 import { hashValue } from "@/src/lib/crypto";
 import { HttpError } from "@/src/lib/http";
-import { prisma } from "@/src/server/prisma";
+import { prisma } from "@/lib/prisma";
 
 export async function enforceRateLimit(routeKey: string, actor: string) {
   const actorHash = hashValue(actor);
@@ -38,3 +38,4 @@ export async function enforceRateLimit(routeKey: string, actor: string) {
     }
   });
 }
+

@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 
 import { createStripeManualCaptureIntent } from "@/src/server/payments/stripe";
-import { prisma } from "@/src/server/prisma";
+import { prisma } from "@/lib/prisma";
 
 const schema = z.object({
   requestId: z.string().min(1)
@@ -38,3 +38,4 @@ export async function POST(request: NextRequest) {
     );
   }
 }
+

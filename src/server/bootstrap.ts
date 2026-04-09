@@ -1,6 +1,6 @@
 import "server-only";
 
-import { prisma } from "@/src/server/prisma";
+import { prisma } from "@/lib/prisma";
 
 export async function ensureBootstrapData() {
   await prisma.serviceAvailability.upsert({
@@ -22,3 +22,4 @@ export async function ensureBootstrapData() {
     }
   });
 }
+
