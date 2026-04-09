@@ -1,6 +1,15 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  Component,
+  type ErrorInfo,
+  type ReactNode,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState
+} from "react";
 import Link from "next/link";
 import type {
   LocalAudioTrack,
@@ -60,6 +69,14 @@ type LiveCallPageClientProps = {
   joinKey?: string | null;
 };
 
+type RoomUiErrorBoundaryProps = LiveCallPageClientProps & {
+  children: ReactNode;
+};
+
+type RoomUiErrorBoundaryState = {
+  message: string | null;
+};
+
 type AttachableTrack = {
   kind: string;
   attach: () => HTMLElement;
@@ -100,15 +117,41 @@ function clearContainer(container: HTMLDivElement | null) {
   container.innerHTML = "";
 }
 
-function attachMediaTrack(container: HTMLDivElement | null, track: AttachableTrack, muted = false) {
+function attachMediaTrack(
+  container: HTMLDivElement | null,
+  track: AttachableTrack,
+  options?: {
+    muted?: boolean;
+    context?: string;
+  }
+) {
+  const context = options?.context ?? `${track.kind} track`;
+  console.error("[Compliment Sandwich live room] attachMediaTrack", {
+    context,
+    containerReady: Boolean(container),
+    kind: track.kind,
+    trackSid: track.sid ?? null
+  });
+
   if (!container) {
-    throw new Error("The media container is not ready yet.");
+    throw new Error(`${context}: the media container is not ready yet.`);
   }
 
   const sid = track.sid ?? `${track.kind}-track`;
   container.querySelectorAll(`[data-track-sid="${sid}"]`).forEach((node) => node.remove());
 
-  const element = track.attach();
+  let element: HTMLElement;
+  try {
+    element = track.attach();
+  } catch (error) {
+    console.error("[Compliment Sandwich live room] track.attach() failed", error, {
+      context,
+      kind: track.kind,
+      trackSid: "sid" in track ? track.sid : null
+    });
+    throw error instanceof Error ? error : new Error(`${context}: track.attach() failed.`);
+  }
+
   element.setAttribute("data-track-sid", sid);
   element.setAttribute("data-track-kind", track.kind);
   element.classList.add(track.kind === "video" ? "media-element" : "media-audio");
@@ -116,17 +159,34 @@ function attachMediaTrack(container: HTMLDivElement | null, track: AttachableTra
   if (typeof HTMLMediaElement !== "undefined" && element instanceof HTMLMediaElement) {
     element.autoplay = true;
     element.setAttribute("playsinline", "true");
-    element.muted = muted;
+    element.muted = Boolean(options?.muted);
   }
 
   if (track.kind === "video") {
     clearContainer(container);
   }
 
-  container.appendChild(element);
+  try {
+    container.appendChild(element);
+  } catch (error) {
+    console.error("[Compliment Sandwich live room] appendChild failed", error, {
+      context,
+      kind: track.kind,
+      trackSid: "sid" in track ? track.sid : null
+    });
+    element.remove();
+    throw error instanceof Error ? error : new Error(`${context}: the media element could not be attached.`);
+  }
+
+  return true;
 }
 
-function detachMediaTrack(track: AttachableTrack) {
+function detachMediaTrack(track: AttachableTrack, context = `${track.kind} track`) {
+  console.error("[Compliment Sandwich live room] detachMediaTrack", {
+    context,
+    kind: track.kind,
+    trackSid: track.sid ?? null
+  });
   track.detach().forEach((element) => element.remove());
 }
 
@@ -185,7 +245,77 @@ async function fetchJson<T>(path: string, init?: RequestInit) {
   return payload as T;
 }
 
-export function CallPageClient({ requestId, role, joinKey }: LiveCallPageClientProps) {
+function RoomCrashFallback({ role, message }: { role: LiveSessionRole; message: string }) {
+  return (
+    <div className="call-layout">
+      <div className="banner danger-banner">{message}</div>
+      <section className="surface stack">
+        <div className="status-line">
+          <strong>{role === LIVE_SESSION_OWNER_ROLE ? "Owner Console" : "Customer Room"}</strong>
+          <span>Live room error</span>
+        </div>
+        <div className="tiny muted">
+          The room hit a client-side problem. Refresh and try joining again. If the compliment is not manually completed,
+          the customer will not be charged.
+        </div>
+        <div className="button-row">
+          {role === LIVE_SESSION_OWNER_ROLE ? (
+            <Link href="/admin" className="retro-button link-button">
+              Back to dashboard
+            </Link>
+          ) : (
+            <Link href="/" className="retro-button link-button">
+              Back to sandwich
+            </Link>
+          )}
+        </div>
+      </section>
+    </div>
+  );
+}
+
+class RoomUiErrorBoundary extends Component<RoomUiErrorBoundaryProps, RoomUiErrorBoundaryState> {
+  state: RoomUiErrorBoundaryState = {
+    message: null
+  };
+
+  static getDerivedStateFromError(error: unknown): RoomUiErrorBoundaryState {
+    return {
+      message: formatExactError(error, "The live room crashed before it could finish rendering.")
+    };
+  }
+
+  componentDidCatch(error: unknown, errorInfo: ErrorInfo) {
+    console.error(
+      `[Compliment Sandwich live room][${this.props.role}] Room UI error boundary caught an error`,
+      error,
+      {
+        componentStack: errorInfo.componentStack,
+        joinKeyPresent: Boolean(this.props.joinKey),
+        requestId: this.props.requestId,
+        stack: error instanceof Error ? error.stack : undefined
+      }
+    );
+  }
+
+  render() {
+    if (this.state.message) {
+      return <RoomCrashFallback role={this.props.role} message={this.state.message} />;
+    }
+
+    return this.props.children;
+  }
+}
+
+export function CallPageClient(props: LiveCallPageClientProps) {
+  return (
+    <RoomUiErrorBoundary key={`${props.role}:${props.requestId}:${props.joinKey ?? "no-join-key"}`} {...props}>
+      <CallPageClientInner {...props} />
+    </RoomUiErrorBoundary>
+  );
+}
+
+function CallPageClientInner({ requestId, role, joinKey }: LiveCallPageClientProps) {
   const [snapshot, setSnapshot] = useState<LiveSessionSnapshot | null>(null);
   const [loading, setLoading] = useState(true);
   const [joining, setJoining] = useState(false);
@@ -194,10 +324,12 @@ export function CallPageClient({ requestId, role, joinKey }: LiveCallPageClientP
   const [audioMuted, setAudioMuted] = useState(false);
   const [customerVideoEnabled, setCustomerVideoEnabled] = useState(false);
   const [localPreviewAttached, setLocalPreviewAttached] = useState(false);
+  const [localPreviewTrack, setLocalPreviewTrack] = useState<LocalVideoTrack | null>(null);
   const [remoteVideoAttached, setRemoteVideoAttached] = useState(false);
   const [ownerActionBusy, setOwnerActionBusy] = useState<"complete" | "not-complete" | null>(null);
   const [roomConnected, setRoomConnected] = useState(false);
 
+  const mountedRef = useRef(false);
   const initializedCustomerMediaRef = useRef(false);
   const twilioVideoModuleRef = useRef<TwilioVideoModule | null>(null);
   const roomRef = useRef<Room | null>(null);
@@ -210,8 +342,36 @@ export function CallPageClient({ requestId, role, joinKey }: LiveCallPageClientP
   const reportRoomError = useCallback((context: string, error: unknown, fallbackMessage: string) => {
     const exactMessage = formatExactError(error, fallbackMessage);
     console.error(`[Compliment Sandwich live room][${role}] ${context}`, error);
-    setErrorMessage(exactMessage);
+    if (mountedRef.current) {
+      setErrorMessage(exactMessage);
+    }
   }, [role]);
+
+  const renderDiagnostics = {
+    audioMuted,
+    customerVideoEnabled,
+    errorMessage,
+    hasSnapshot: Boolean(snapshot),
+    infoMessage,
+    joining,
+    loading,
+    localPreviewAttached,
+    remoteVideoAttached,
+    requestId,
+    requestStatus: snapshot?.requestStatus ?? null,
+    role,
+    roomConnected,
+    roomStatus: snapshot?.liveSession.status ?? null
+  };
+
+  function computeRenderValue<T>(context: string, fallbackValue: T, compute: () => T) {
+    try {
+      return compute();
+    } catch (error) {
+      console.error(`[Compliment Sandwich live room][${role}] Render compute failed: ${context}`, error, renderDiagnostics);
+      return fallbackValue;
+    }
+  }
 
   const loadTwilioVideo = useCallback(async () => {
     if (twilioVideoModuleRef.current) {
@@ -301,113 +461,171 @@ export function CallPageClient({ requestId, role, joinKey }: LiveCallPageClientP
   }, [joinKey, role]);
 
   const statusCopy = useMemo(() => {
-    if (!snapshot) {
-      return "Loading the live compliment room...";
-    }
+    return computeRenderValue("statusCopy", "Live room status unavailable.", () => {
+      if (!snapshot) {
+        return "Loading the live compliment room...";
+      }
 
-    if (snapshot.requestStatus === "completed") {
-      return "Compliment completed. The charge only happens after the owner confirms it.";
-    }
+      if (snapshot.requestStatus === "completed") {
+        return "Compliment completed. The charge only happens after the owner confirms it.";
+      }
 
-    if (snapshot.requestStatus === "failed" || snapshot.requestStatus === "canceled") {
-      return snapshot.failureReason || snapshot.liveSession.endedReason || "The session ended before completion, so no charge was made.";
-    }
+      if (snapshot.requestStatus === "failed" || snapshot.requestStatus === "canceled") {
+        return snapshot.failureReason || snapshot.liveSession.endedReason || "The session ended before completion, so no charge was made.";
+      }
 
-    if (snapshot.liveSession.status === "joined") {
-      return "Both sides are connected live.";
-    }
+      if (snapshot.liveSession.status === "joined") {
+        return "Both sides are connected live.";
+      }
 
-    return getWaitingLabel(role, snapshot.liveSession.ownerConnected, snapshot.liveSession.customerConnected);
+      return getWaitingLabel(role, snapshot.liveSession.ownerConnected, snapshot.liveSession.customerConnected);
+    });
   }, [role, snapshot]);
 
   const remotePlaceholder = useMemo(() => {
-    if (!snapshot) {
-      return "Checking the compliment room...";
-    }
-
-    if (role === LIVE_SESSION_OWNER_ROLE) {
-      if (!snapshot.liveSession.customerConnected) {
-        return "Waiting for the customer to enter the room.";
+    return computeRenderValue("remotePlaceholder", "Checking the compliment room...", () => {
+      if (!snapshot) {
+        return "Checking the compliment room...";
       }
 
-      return snapshot.liveSession.customerVideoEnabled
-        ? "Customer video should appear here."
-        : "Customer is here with audio only or has the camera turned off.";
-    }
+      if (role === LIVE_SESSION_OWNER_ROLE) {
+        if (!snapshot.liveSession.customerConnected) {
+          return "Waiting for the customer to enter the room.";
+        }
 
-    if (!snapshot.liveSession.ownerConnected) {
-      return "Waiting for the owner to join on video.";
-    }
+        return snapshot.liveSession.customerVideoEnabled
+          ? "Customer video should appear here."
+          : "Customer is here with audio only or has the camera turned off.";
+      }
 
-    return snapshot.liveSession.ownerVideoEnabled
-      ? "Owner video should appear here."
-      : "Owner video is reconnecting.";
+      if (!snapshot.liveSession.ownerConnected) {
+        return "Waiting for the owner to join on video.";
+      }
+
+      return snapshot.liveSession.ownerVideoEnabled
+        ? "Owner video should appear here."
+        : "Owner video is reconnecting.";
+    });
   }, [role, snapshot]);
 
   const localPlaceholder = useMemo(() => {
-    if (role === LIVE_SESSION_OWNER_ROLE) {
-      return "Your camera preview appears here after you join. Video is required for the owner.";
-    }
+    return computeRenderValue("localPlaceholder", "Your preview will appear here after you join.", () => {
+      if (role === LIVE_SESSION_OWNER_ROLE) {
+        return "Your camera preview appears here after you join. Video is required for the owner.";
+      }
 
-    if (!customerVideoEnabled) {
-      return "Your camera is off. You can still join, talk, mute, and keep video optional.";
-    }
+      if (!customerVideoEnabled) {
+        return "Your camera is off. You can still join, talk, mute, and keep video optional.";
+      }
 
-    return "Your camera preview appears here after you join.";
+      return "Your camera preview appears here after you join.";
+    });
   }, [customerVideoEnabled, role]);
 
   const secondaryNote = useMemo(() => {
-    if (!snapshot) {
-      return "";
-    }
+    return computeRenderValue("secondaryNote", "", () => {
+      if (!snapshot) {
+        return "";
+      }
 
-    if (role === LIVE_SESSION_OWNER_ROLE) {
-      return snapshot.liveSession.customerConnected
-        ? snapshot.liveSession.customerVideoEnabled
-          ? "Customer joined with video enabled."
-          : snapshot.liveSession.customerAudioMuted
-            ? "Customer is in the room with the camera off and mic muted."
-            : "Customer is in the room with the camera off."
-        : "Customer has not joined yet.";
-    }
+      if (role === LIVE_SESSION_OWNER_ROLE) {
+        return snapshot.liveSession.customerConnected
+          ? snapshot.liveSession.customerVideoEnabled
+            ? "Customer joined with video enabled."
+            : snapshot.liveSession.customerAudioMuted
+              ? "Customer is in the room with the camera off and mic muted."
+              : "Customer is in the room with the camera off."
+          : "Customer has not joined yet.";
+      }
 
-    return snapshot.liveSession.ownerConnected
-      ? "The owner should appear on video once the connection settles."
-      : "If the owner never joins or the room drops before completion, you are not charged.";
+      return snapshot.liveSession.ownerConnected
+        ? "The owner should appear on video once the connection settles."
+        : "If the owner never joins or the room drops before completion, you are not charged.";
+    });
+  }, [role, snapshot]);
+
+  const amountLine = useMemo(() => {
+    return computeRenderValue("amountLine", "Loading request details...", () => {
+      return snapshot ? `Amount: ${formatMoney(snapshot.amountCents)}. Payment status: ${snapshot.paymentStatus}.` : "Loading request details...";
+    });
+  }, [snapshot]);
+
+  const localPresenceNote = useMemo(() => {
+    return computeRenderValue("localPresenceNote", "Preview unavailable.", () => {
+      return role === LIVE_SESSION_OWNER_ROLE
+        ? "Join with camera on before speaking."
+        : customerVideoEnabled
+          ? "Camera on is optional and currently selected."
+          : "Camera off is allowed. You can still talk and mute anytime.";
+    });
+  }, [customerVideoEnabled, role]);
+
+  const remotePresenceNote = useMemo(() => {
+    return computeRenderValue("remotePresenceNote", "Loading live presence...", () => {
+      if (!snapshot) {
+        return "Loading live presence...";
+      }
+
+      if (role === LIVE_SESSION_OWNER_ROLE) {
+        return snapshot.liveSession.customerConnected
+          ? snapshot.liveSession.customerVideoEnabled
+            ? "Customer is connected with video."
+            : snapshot.liveSession.customerAudioMuted
+              ? "Customer is connected with the mic muted."
+              : "Customer is connected with audio only."
+          : "Customer not connected yet.";
+      }
+
+      return snapshot.liveSession.ownerConnected
+        ? snapshot.liveSession.ownerVideoEnabled
+          ? "Owner is connected on video."
+          : "Owner video is reconnecting."
+        : "Owner not connected yet.";
+    });
   }, [role, snapshot]);
 
   async function refreshSnapshot(showErrors = true) {
     try {
       const nextSnapshot = await fetchJson<LiveSessionSnapshot>(`/api/live/session/${requestId}?${sessionQuery}`);
-      setSnapshot(nextSnapshot);
-      if (role === LIVE_SESSION_CUSTOMER_ROLE && !initializedCustomerMediaRef.current) {
+      if (mountedRef.current) {
+        setSnapshot(nextSnapshot);
+      }
+      if (mountedRef.current && role === LIVE_SESSION_CUSTOMER_ROLE && !initializedCustomerMediaRef.current) {
         setCustomerVideoEnabled(nextSnapshot.liveSession.customerRequestedVideo);
         initializedCustomerMediaRef.current = true;
       }
-      setLoading(false);
+      if (mountedRef.current) {
+        setLoading(false);
+      }
       return nextSnapshot;
     } catch (error) {
       console.error(`[Compliment Sandwich live room][${role}] Failed to refresh session snapshot`, error);
-      setLoading(false);
-      if (showErrors) {
+      if (mountedRef.current) {
+        setLoading(false);
+      }
+      if (mountedRef.current && showErrors) {
         setErrorMessage(formatExactError(error, "Unable to load live session."));
       }
       return null;
     }
   }
 
-  function clearRemoteMedia() {
+  function clearRemoteMedia(suppressState = false) {
     clearContainer(remoteVideoRef.current);
     clearContainer(remoteAudioRef.current);
-    setRemoteVideoAttached(false);
+    if (!suppressState && mountedRef.current) {
+      setRemoteVideoAttached(false);
+    }
   }
 
-  function clearLocalPreview() {
+  function clearLocalPreview(suppressState = false) {
     clearContainer(localPreviewRef.current);
-    setLocalPreviewAttached(false);
+    if (!suppressState && mountedRef.current) {
+      setLocalPreviewAttached(false);
+    }
   }
 
-  function teardownRoom(room: Room | null) {
+  function teardownRoom(room: Room | null, options?: { suppressState?: boolean }) {
     const activeRoom = room ?? roomRef.current;
     if (activeRoom) {
       activeRoom.localParticipant.tracks.forEach((publication) => {
@@ -429,31 +647,59 @@ export function CallPageClient({ requestId, role, joinKey }: LiveCallPageClientP
     roomRef.current = null;
     localAudioTrackRef.current = null;
     localVideoTrackRef.current = null;
-    clearLocalPreview();
-    clearRemoteMedia();
-    setAudioMuted(false);
-    setRoomConnected(false);
+    if (!options?.suppressState && mountedRef.current) {
+      setLocalPreviewTrack(null);
+    }
+    clearLocalPreview(Boolean(options?.suppressState));
+    clearRemoteMedia(Boolean(options?.suppressState));
+    if (!options?.suppressState && mountedRef.current) {
+      setAudioMuted(false);
+      setRoomConnected(false);
+    }
   }
 
   function attachLocalVideo(track: LocalVideoTrack) {
-    try {
-      attachMediaTrack(localPreviewRef.current, track, true);
-      setLocalPreviewAttached(true);
-    } catch (error) {
-      reportRoomError("Local video attach failed", error, "Your camera preview could not be displayed.");
+    if (!mountedRef.current) {
+      console.error(`[Compliment Sandwich live room][${role}] Tried to queue local video before mount`, {
+        requestId,
+        trackSid: "sid" in track ? track.sid : null
+      });
+      return;
     }
+
+    console.error(`[Compliment Sandwich live room][${role}] Queueing local video preview`, {
+      requestId,
+      trackSid: "sid" in track ? track.sid : null
+    });
+    setLocalPreviewTrack(track);
   }
 
   function attachRemoteTrack(track: RemoteTrack) {
     try {
+      if (!mountedRef.current) {
+        console.error(`[Compliment Sandwich live room][${role}] Skipping remote track attach before mount`, {
+          kind: track.kind,
+          trackSid: "sid" in track ? track.sid : null
+        });
+        return;
+      }
+
       if (track.kind === "video") {
-        attachMediaTrack(remoteVideoRef.current, track as unknown as AttachableTrack);
-        setRemoteVideoAttached(true);
+        const attached = attachMediaTrack(remoteVideoRef.current, track as unknown as AttachableTrack, {
+          context: `${role} remote video`,
+          muted: false
+        });
+        if (attached && mountedRef.current) {
+          setRemoteVideoAttached(true);
+        }
         return;
       }
 
       if (track.kind === "audio") {
-        attachMediaTrack(remoteAudioRef.current, track as unknown as AttachableTrack);
+        attachMediaTrack(remoteAudioRef.current, track as unknown as AttachableTrack, {
+          context: `${role} remote audio`,
+          muted: false
+        });
       }
     } catch (error) {
       reportRoomError("Remote track attach failed", error, "A participant media track could not be displayed.");
@@ -463,9 +709,9 @@ export function CallPageClient({ requestId, role, joinKey }: LiveCallPageClientP
   function detachRemoteTrack(track: RemoteTrack) {
     try {
       if (track.kind === "audio" || track.kind === "video") {
-        detachMediaTrack(track as unknown as AttachableTrack);
+        detachMediaTrack(track as unknown as AttachableTrack, `${role} remote ${track.kind}`);
       }
-      if (track.kind === "video") {
+      if (track.kind === "video" && mountedRef.current) {
         setRemoteVideoAttached(false);
       }
     } catch (error) {
@@ -475,6 +721,15 @@ export function CallPageClient({ requestId, role, joinKey }: LiveCallPageClientP
 
   function registerParticipant(participant: RemoteParticipant) {
     try {
+      console.error(`[Compliment Sandwich live room][${role}] Registering participant`, {
+        participantSid: participant.sid,
+        publications: Array.from(participant.tracks.values()).map((publication) => ({
+          hasTrack: Boolean(publication.track),
+          kind: publication.track?.kind ?? null,
+          trackSid: publication.track?.sid ?? null
+        }))
+      });
+
       participant.tracks.forEach((publication) => {
         if (publication.track) {
           attachRemoteTrack(publication.track);
@@ -483,12 +738,11 @@ export function CallPageClient({ requestId, role, joinKey }: LiveCallPageClientP
 
       participant.on("trackSubscribed", (track) => {
         try {
-          if (track.kind === "video") {
-            console.error(`[Compliment Sandwich live room][${role}] Remote video track subscribed`, {
-              participantSid: participant.sid,
-              trackSid: track.sid
-            });
-          }
+          console.error(`[Compliment Sandwich live room][${role}] trackSubscribed`, {
+            kind: track.kind,
+            participantSid: participant.sid,
+            trackSid: track.sid
+          });
           attachRemoteTrack(track);
           if (track.kind === "audio" || track.kind === "video") {
             track.on("enabled", () => {
@@ -513,6 +767,11 @@ export function CallPageClient({ requestId, role, joinKey }: LiveCallPageClientP
 
       participant.on("trackUnsubscribed", (track) => {
         try {
+          console.error(`[Compliment Sandwich live room][${role}] trackUnsubscribed`, {
+            kind: track.kind,
+            participantSid: participant.sid,
+            trackSid: track.sid
+          });
           detachRemoteTrack(track);
         } catch (error) {
           reportRoomError("Remote track unsubscribe failed", error, "A participant media track could not be removed.");
@@ -575,14 +834,18 @@ export function CallPageClient({ requestId, role, joinKey }: LiveCallPageClientP
       }
 
       roomRef.current = room;
-      setRoomConnected(true);
+      if (mountedRef.current) {
+        setRoomConnected(true);
+      }
 
       const nextAudioTrack = findLocalAudioTrack(room, localTracks);
       const nextVideoTrack = findLocalVideoTrack(room, localTracks);
 
       localAudioTrackRef.current = nextAudioTrack;
       localVideoTrackRef.current = nextVideoTrack;
-      setAudioMuted(Boolean(nextAudioTrack && nextAudioTrack.isEnabled === false));
+      if (mountedRef.current) {
+        setAudioMuted(Boolean(nextAudioTrack && nextAudioTrack.isEnabled === false));
+      }
 
       if (wantsVideo && !nextVideoTrack) {
         throw new Error("The room connected but no local video track was available.");
@@ -590,19 +853,28 @@ export function CallPageClient({ requestId, role, joinKey }: LiveCallPageClientP
 
       if (nextVideoTrack) {
         attachLocalVideo(nextVideoTrack);
-        if (role === LIVE_SESSION_CUSTOMER_ROLE) {
+        if (mountedRef.current && role === LIVE_SESSION_CUSTOMER_ROLE) {
           setCustomerVideoEnabled(nextVideoTrack.isEnabled);
         }
       } else {
+        if (mountedRef.current) {
+          setLocalPreviewTrack(null);
+        }
         clearLocalPreview();
       }
 
+      console.error(`[Compliment Sandwich live room][${role}] Mapping room participants after connect`, {
+        count: room.participants.size
+      });
       room.participants.forEach((participant) => {
         registerParticipant(participant);
       });
 
       room.on("participantConnected", (participant) => {
         try {
+          console.error(`[Compliment Sandwich live room][${role}] participantConnected`, {
+            participantSid: participant.sid
+          });
           registerParticipant(participant);
         } catch (error) {
           reportRoomError("Participant connect handling failed", error, "A participant could not join cleanly.");
@@ -611,6 +883,9 @@ export function CallPageClient({ requestId, role, joinKey }: LiveCallPageClientP
 
       room.on("participantDisconnected", (participant) => {
         try {
+          console.error(`[Compliment Sandwich live room][${role}] participantDisconnected`, {
+            participantSid: participant.sid
+          });
           participant.tracks.forEach((publication) => {
             if (publication.track) {
               detachRemoteTrack(publication.track);
@@ -646,16 +921,20 @@ export function CallPageClient({ requestId, role, joinKey }: LiveCallPageClientP
       stopLocalTracks(localTracks);
       teardownRoom(roomRef.current);
     } finally {
-      setJoining(false);
+      if (mountedRef.current) {
+        setJoining(false);
+      }
     }
   }
 
   function leaveRoom() {
-    setInfoMessage(
-      role === LIVE_SESSION_OWNER_ROLE
-        ? "You left the room. If the compliment is not manually completed, the customer will not be charged."
-        : "You left the room. You are not charged unless the compliment was already completed."
-    );
+    if (mountedRef.current) {
+      setInfoMessage(
+        role === LIVE_SESSION_OWNER_ROLE
+          ? "You left the room. If the compliment is not manually completed, the customer will not be charged."
+          : "You left the room. You are not charged unless the compliment was already completed."
+      );
+    }
     roomRef.current?.disconnect();
     teardownRoom(roomRef.current);
   }
@@ -669,12 +948,16 @@ export function CallPageClient({ requestId, role, joinKey }: LiveCallPageClientP
     try {
       if (audioMuted) {
         audioTrack.enable();
-        setAudioMuted(false);
+        if (mountedRef.current) {
+          setAudioMuted(false);
+        }
         return;
       }
 
       audioTrack.disable();
-      setAudioMuted(true);
+      if (mountedRef.current) {
+        setAudioMuted(true);
+      }
     } catch (error) {
       reportRoomError("Local audio toggle failed", error, "Your microphone could not be updated.");
     }
@@ -696,16 +979,21 @@ export function CallPageClient({ requestId, role, joinKey }: LiveCallPageClientP
     try {
       if (existingTrack && existingTrack.isEnabled) {
         existingTrack.disable();
-        detachMediaTrack(existingTrack);
-        setCustomerVideoEnabled(false);
-        setLocalPreviewAttached(false);
+        detachMediaTrack(existingTrack, `${role} customer local video toggle off`);
+        if (mountedRef.current) {
+          setCustomerVideoEnabled(false);
+          setLocalPreviewTrack(null);
+          setLocalPreviewAttached(false);
+        }
         return;
       }
 
       if (existingTrack) {
         existingTrack.enable();
         attachLocalVideo(existingTrack);
-        setCustomerVideoEnabled(true);
+        if (mountedRef.current) {
+          setCustomerVideoEnabled(true);
+        }
         return;
       }
 
@@ -715,7 +1003,9 @@ export function CallPageClient({ requestId, role, joinKey }: LiveCallPageClientP
       await room.localParticipant.publishTrack(newTrack);
       localVideoTrackRef.current = newTrack;
       attachLocalVideo(newTrack);
-      setCustomerVideoEnabled(true);
+      if (mountedRef.current) {
+        setCustomerVideoEnabled(true);
+      }
     } catch (error) {
       reportRoomError("Customer video toggle failed", error, "Unable to turn the camera on.");
     }
@@ -726,9 +1016,11 @@ export function CallPageClient({ requestId, role, joinKey }: LiveCallPageClientP
       return;
     }
 
-    setOwnerActionBusy(action);
-    setErrorMessage(null);
-    setInfoMessage(null);
+    if (mountedRef.current) {
+      setOwnerActionBusy(action);
+      setErrorMessage(null);
+      setInfoMessage(null);
+    }
 
     try {
       const payload = await fetchJson<{ message?: string }>(
@@ -738,14 +1030,93 @@ export function CallPageClient({ requestId, role, joinKey }: LiveCallPageClientP
           body: JSON.stringify({})
         }
       );
-      setInfoMessage(payload.message || "Request updated.");
+      if (mountedRef.current) {
+        setInfoMessage(payload.message || "Request updated.");
+      }
       await refreshSnapshot(false);
     } catch (error) {
       reportRoomError("Owner action update failed", error, "Unable to update request.");
     } finally {
-      setOwnerActionBusy(null);
+      if (mountedRef.current) {
+        setOwnerActionBusy(null);
+      }
     }
   }
+
+  useEffect(() => {
+    mountedRef.current = true;
+
+    return () => {
+      mountedRef.current = false;
+    };
+  }, []);
+
+  useEffect(() => {
+    if (typeof window === "undefined") {
+      return;
+    }
+
+    const handleWindowError = (event: ErrorEvent) => {
+      const fallbackMessage = event.message || "A live room error occurred in the browser.";
+      console.error(`[Compliment Sandwich live room][${role}] Window error`, event.error ?? event, {
+        requestId,
+        stack: event.error instanceof Error ? event.error.stack : undefined
+      });
+      event.preventDefault?.();
+      if (mountedRef.current) {
+        setErrorMessage(formatExactError(event.error ?? new Error(fallbackMessage), fallbackMessage));
+      }
+    };
+
+    const handleUnhandledRejection = (event: PromiseRejectionEvent) => {
+      console.error(`[Compliment Sandwich live room][${role}] Unhandled promise rejection`, event.reason, {
+        requestId
+      });
+      event.preventDefault?.();
+      if (mountedRef.current) {
+        setErrorMessage(formatExactError(event.reason, "A live room request failed unexpectedly."));
+      }
+    };
+
+    window.addEventListener("error", handleWindowError);
+    window.addEventListener("unhandledrejection", handleUnhandledRejection);
+
+    return () => {
+      window.removeEventListener("error", handleWindowError);
+      window.removeEventListener("unhandledrejection", handleUnhandledRejection);
+    };
+  }, [requestId, role]);
+
+  useEffect(() => {
+    if (!localPreviewTrack) {
+      clearLocalPreview();
+      return;
+    }
+
+    try {
+      const attached = attachMediaTrack(localPreviewRef.current, localPreviewTrack, {
+        context: `${role} local preview`,
+        muted: true
+      });
+      if (mountedRef.current) {
+        setLocalPreviewAttached(attached);
+      }
+    } catch (error) {
+      reportRoomError("Local video attach failed", error, "Your camera preview could not be displayed.");
+      if (mountedRef.current) {
+        setLocalPreviewAttached(false);
+      }
+    }
+
+    return () => {
+      try {
+        detachMediaTrack(localPreviewTrack, `${role} local preview cleanup`);
+      } catch (error) {
+        console.error(`[Compliment Sandwich live room][${role}] Local preview cleanup failed`, error);
+      }
+      clearContainer(localPreviewRef.current);
+    };
+  }, [localPreviewTrack, reportRoomError, role]);
 
   useEffect(() => {
     let cancelled = false;
@@ -767,7 +1138,7 @@ export function CallPageClient({ requestId, role, joinKey }: LiveCallPageClientP
       cancelled = true;
       window.clearInterval(timer);
       roomRef.current?.disconnect();
-      teardownRoom(roomRef.current);
+      teardownRoom(roomRef.current, { suppressState: true });
     };
   }, [requestId, sessionQuery]);
 
@@ -796,7 +1167,7 @@ export function CallPageClient({ requestId, role, joinKey }: LiveCallPageClientP
           <span>{statusCopy}</span>
         </div>
         <div className="tiny muted">
-          {snapshot ? `Amount: ${formatMoney(snapshot.amountCents)}. Payment status: ${snapshot.paymentStatus}.` : "Loading request details..."}
+          {amountLine}
         </div>
         <div className="stack tiny muted">
           {role === LIVE_SESSION_OWNER_ROLE ? (
@@ -901,13 +1272,7 @@ export function CallPageClient({ requestId, role, joinKey }: LiveCallPageClientP
           <div className="media-frame" ref={localPreviewRef}>
             {!localPreviewAttached ? <div className="media-placeholder">{localPlaceholder}</div> : null}
           </div>
-          <div className="tiny muted">
-            {role === LIVE_SESSION_OWNER_ROLE
-              ? "Join with camera on before speaking."
-              : customerVideoEnabled
-                ? "Camera on is optional and currently selected."
-                : "Camera off is allowed. You can still talk and mute anytime."}
-          </div>
+          <div className="tiny muted">{localPresenceNote}</div>
         </div>
 
         <div className="surface stack">
@@ -916,25 +1281,21 @@ export function CallPageClient({ requestId, role, joinKey }: LiveCallPageClientP
             {!remoteVideoAttached ? <div className="media-placeholder">{remotePlaceholder}</div> : null}
           </div>
           <div ref={remoteAudioRef} className="remote-audio-shell" />
-          <div className="tiny muted">
-            {snapshot
-              ? role === LIVE_SESSION_OWNER_ROLE
-                ? snapshot.liveSession.customerConnected
-                  ? snapshot.liveSession.customerVideoEnabled
-                    ? "Customer is connected with video."
-                    : snapshot.liveSession.customerAudioMuted
-                      ? "Customer is connected with the mic muted."
-                      : "Customer is connected with audio only."
-                  : "Customer not connected yet."
-                : snapshot.liveSession.ownerConnected
-                  ? snapshot.liveSession.ownerVideoEnabled
-                    ? "Owner is connected on video."
-                    : "Owner video is reconnecting."
-                  : "Owner not connected yet."
-              : "Loading live presence..."}
-          </div>
+          <div className="tiny muted">{remotePresenceNote}</div>
         </div>
       </section>
     </div>
   );
 }
+
+
+
+
+
+
+
+
+
+
+
+
