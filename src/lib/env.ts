@@ -7,6 +7,8 @@ const serverEnvSchema = z.object({
   ADMIN_SESSION_SECRET: z.string().min(16),
   TWILIO_ACCOUNT_SID: z.string().min(1),
   TWILIO_AUTH_TOKEN: z.string().min(1),
+  TWILIO_PHONE_NUMBER: z.string().min(1).optional(),
+  OWNER_DESTINATION_PHONE_E164: z.string().min(1).optional(),
   TWILIO_API_KEY_SID: z.string().min(1),
   TWILIO_API_KEY_SECRET: z.string().min(1),
   STRIPE_SECRET_KEY: z.string().min(1),

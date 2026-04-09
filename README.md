@@ -30,6 +30,8 @@ Compliment Sandwich is a funny little Windows-95-looking MVP where a customer pi
 - `ADMIN_SESSION_SECRET`
 - `TWILIO_ACCOUNT_SID`
 - `TWILIO_AUTH_TOKEN`
+- `TWILIO_PHONE_NUMBER` for optional owner SMS alerts
+- `OWNER_DESTINATION_PHONE_E164` for optional owner SMS alerts
 - `TWILIO_API_KEY_SID`
 - `TWILIO_API_KEY_SECRET`
 - `TWILIO_VIDEO_ROOM_TYPE`
@@ -53,6 +55,7 @@ Compliment Sandwich is a funny little Windows-95-looking MVP where a customer pi
 7. Customer joins with camera optional and can mute or turn the camera on and off.
 8. Owner manually marks the request completed to capture the payment.
 9. If the room disconnects, the owner never joins, or the session ends before completion is marked, the authorization is canceled or voided.
+10. After payment authorization succeeds and the request becomes an active live room, the app can optionally text the owner to open the admin dashboard.
 
 ## Payment safety
 
@@ -90,6 +93,13 @@ That split keeps the fail-closed logic explicit: room creation does not charge, 
 - Customer can turn the camera on or off in the room.
 - The owner page requires video by default, but the customer is never forced to enable camera.
 - The browser room uses a customer join key so the customer gets room access without learning any owner-only admin URL.
+
+## SMS owner alerts
+
+- SMS alerts are optional.
+- If `TWILIO_PHONE_NUMBER` and `OWNER_DESTINATION_PHONE_E164` are configured, the app sends a text after payment authorization succeeds and the request becomes an active live room.
+- The text includes the amount, request id, and an admin dashboard URL based on `APP_URL`.
+- If SMS sending fails or those env vars are missing, the request flow still continues normally and the failure is only logged server-side.
 
 ## Owner dashboard
 
@@ -130,6 +140,9 @@ That split keeps the fail-closed logic explicit: room creation does not charge, 
 - Rate limiting and client request ids protect against duplicate submits.
 - Legacy Twilio voice endpoints are left in the app as disabled stubs so old phone-flow URLs fail clearly instead of silently charging.
 - When in doubt, the code does not charge the customer.
+
+
+
 
 
 

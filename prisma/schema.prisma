@@ -84,6 +84,7 @@ model ComplimentRequest {
   status              ComplimentRequestStatus @default(pending)
   publicMessage       String?
   failureReason       String?
+  ownerAlertSentAt    DateTime?
   provider            PaymentProvider?
   paymentMethodType   PaymentMethodType       @default(unknown)
   createdAt           DateTime                @default(now())
@@ -181,3 +182,5 @@ model RateLimitEvent {
 
   @@index([routeKey, actorHash, createdAt])
 }
+
+

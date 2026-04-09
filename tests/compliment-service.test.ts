@@ -7,7 +7,9 @@ import { ensureBootstrapData } from "@/src/server/bootstrap";
 import { setAvailability } from "@/src/server/services/availability";
 import { createComplimentService } from "@/src/server/services/compliment-service";
 
-function buildService() {
+function buildService(overrides: {
+  sendOwnerAlert?: (input: { requestId: string; amountCents: number }) => Promise<unknown>;
+} = {}) {
   return createComplimentService({
     createRoom: vi.fn(async ({ requestId }) => ({
       roomName: `room_${requestId}`,
@@ -21,7 +23,8 @@ function buildService() {
     paypal: {
       capture: vi.fn(async () => ({ id: `cap_${randomUUID()}` })),
       cancel: vi.fn(async () => ({ id: `void_${randomUUID()}` }))
-    }
+    },
+    sendOwnerAlert: overrides.sendOwnerAlert ?? vi.fn(async () => undefined)
   });
 }
 
@@ -92,6 +95,52 @@ describe("compliment service live sessions", () => {
     expect(completed.status).toBe("completed");
     expect(completed.paymentAttempts[0]?.status).toBe("captured");
     expect(completed.liveSession?.customerVideoEnabled).toBe(false);
+  });
+
+  it("keeps the request active and avoids duplicate SMS alerts on retry", async () => {
+    const sendOwnerAlert = vi.fn(async () => {
+      throw new Error("sms unavailable");
+    });
+    const service = buildService({ sendOwnerAlert });
+
+    const pending = await service.createPendingRequest({
+      clientRequestId: randomUUID(),
+      amountCents: 500,
+      customerPhoneRaw: null,
+      provider: "stripe",
+      paymentMethodType: "card"
+    });
+
+    const active = await service.confirmAuthorizedPayment({
+      requestId: pending.id,
+      provider: "stripe",
+      paymentMethodType: "card",
+      externalPaymentId: `pi_${randomUUID()}`,
+      authorizationId: `pi_${randomUUID()}`,
+      idempotencyKey: randomUUID(),
+      customerRequestedVideo: false
+    });
+
+    expect(active.status).toBe("calling");
+    expect(sendOwnerAlert).toHaveBeenCalledTimes(1);
+    expect(sendOwnerAlert).toHaveBeenCalledWith({
+      requestId: active.id,
+      amountCents: active.amountCents
+    });
+
+    const retried = await service.confirmAuthorizedPayment({
+      requestId: pending.id,
+      provider: "stripe",
+      paymentMethodType: "card",
+      externalPaymentId: `pi_${randomUUID()}`,
+      authorizationId: `pi_${randomUUID()}`,
+      idempotencyKey: randomUUID(),
+      customerRequestedVideo: false
+    });
+
+    expect(retried.id).toBe(active.id);
+    expect(retried.status).toBe("calling");
+    expect(sendOwnerAlert).toHaveBeenCalledTimes(1);
   });
 
   it("allows the customer to join with video off", async () => {
@@ -217,4 +266,7 @@ describe("compliment service live sessions", () => {
     ).rejects.toThrow("Amount must be at least $0.50.");
   });
 });
+
+
+
 

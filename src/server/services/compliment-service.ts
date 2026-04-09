@@ -11,6 +11,7 @@ import {
   Prisma
 } from "@prisma/client";
 
+import { sendOwnerNewRequestSms } from "@/src/server/alerts/twilio-sms";
 import { createLiveAccessToken, createLiveRoom, completeLiveRoom } from "@/src/server/live/twilio-video";
 import { getServerEnv } from "@/src/lib/env";
 import { validateMinimumAmount } from "@/src/lib/amount";
@@ -64,13 +65,18 @@ type ServiceDependencies = {
     capture: (authorizationId: string) => Promise<unknown>;
     cancel: (authorizationId: string) => Promise<unknown>;
   };
+  sendOwnerAlert: (input: {
+    requestId: string;
+    amountCents: number;
+  }) => Promise<unknown>;
 };
 
 const defaultDependencies: ServiceDependencies = {
   createRoom: createLiveRoom,
   completeRoom: completeLiveRoom,
   stripe: paymentGateways.stripe,
-  paypal: paymentGateways.paypal
+  paypal: paymentGateways.paypal,
+  sendOwnerAlert: sendOwnerNewRequestSms
 };
 
 function latestPayment(request: RequestWithAttempts) {
@@ -564,7 +570,20 @@ export function createComplimentService(overrides: Partial<ServiceDependencies> 
           }
         });
 
-        return getRequestOrThrow(liveSession.complimentRequestId);
+        const activeRequest = await getRequestOrThrow(liveSession.complimentRequestId);
+
+        try {
+          await dependencies.sendOwnerAlert({
+            requestId: activeRequest.id,
+            amountCents: activeRequest.amountCents
+          });
+        } catch (error) {
+          console.error("[Compliment Sandwich SMS] Owner alert dependency failed.", error, {
+            requestId: activeRequest.id
+          });
+        }
+
+        return activeRequest;
       } catch (error) {
         await cancelAuthorizedPaymentForRequest(
           request.id,
@@ -997,5 +1016,8 @@ export function createComplimentService(overrides: Partial<ServiceDependencies> 
 }
 
 export const complimentService = createComplimentService();
+
+
+
 
 
