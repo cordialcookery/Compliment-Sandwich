@@ -18,6 +18,7 @@ import {
 } from "@/src/lib/live-session";
 
 type TwilioVideoModule = typeof import("twilio-video");
+type ConnectableLocalTrack = LocalAudioTrack | LocalVideoTrack;
 
 type LiveSessionSnapshot = {
   requestId: string;
@@ -66,6 +67,13 @@ type AttachableTrack = {
   sid?: string;
 };
 
+const VIDEO_CONSTRAINTS = {
+  width: 640,
+  height: 360,
+  frameRate: 24,
+  facingMode: "user"
+} as const;
+
 function formatMoney(amountCents: number) {
   return new Intl.NumberFormat("en-US", {
     style: "currency",
@@ -73,22 +81,15 @@ function formatMoney(amountCents: number) {
   }).format(amountCents / 100);
 }
 
-async function fetchJson<T>(path: string, init?: RequestInit) {
-  const response = await fetch(path, {
-    cache: "no-store",
-    ...init,
-    headers: {
-      ...(init?.headers ?? {}),
-      ...(init?.body ? { "Content-Type": "application/json" } : {})
-    }
-  });
-
-  const payload = (await response.json().catch(() => ({}))) as Record<string, unknown>;
-  if (!response.ok) {
-    throw new Error(typeof payload.error === "string" ? payload.error : "Request failed.");
+function formatExactError(error: unknown, fallbackMessage: string) {
+  if (error instanceof Error) {
+    const name = "name" in error && typeof error.name === "string" && error.name !== "Error"
+      ? `${error.name}: `
+      : "";
+    return `${name}${error.message || fallbackMessage}`;
   }
 
-  return payload as T;
+  return fallbackMessage;
 }
 
 function clearContainer(container: HTMLDivElement | null) {
@@ -101,7 +102,7 @@ function clearContainer(container: HTMLDivElement | null) {
 
 function attachMediaTrack(container: HTMLDivElement | null, track: AttachableTrack, muted = false) {
   if (!container) {
-    return;
+    throw new Error("The media container is not ready yet.");
   }
 
   const sid = track.sid ?? `${track.kind}-track`;
@@ -137,6 +138,53 @@ function isTerminal(snapshot: LiveSessionSnapshot | null) {
   return ["completed", "failed", "canceled"].includes(snapshot.requestStatus);
 }
 
+function stopStream(stream: MediaStream | null) {
+  stream?.getTracks().forEach((track) => track.stop());
+}
+
+function stopLocalTracks(tracks: ConnectableLocalTrack[]) {
+  tracks.forEach((track) => {
+    try {
+      track.stop();
+      track.detach().forEach((element) => element.remove());
+    } catch {
+      // best-effort cleanup only
+    }
+  });
+}
+
+function findLocalAudioTrack(room: Room | null, localTracks: ConnectableLocalTrack[]) {
+  return (
+    localTracks.find((track): track is LocalAudioTrack => track.kind === "audio") ??
+    (room ? Array.from(room.localParticipant.audioTracks.values())[0]?.track ?? null : null)
+  );
+}
+
+function findLocalVideoTrack(room: Room | null, localTracks: ConnectableLocalTrack[]) {
+  return (
+    localTracks.find((track): track is LocalVideoTrack => track.kind === "video") ??
+    (room ? Array.from(room.localParticipant.videoTracks.values())[0]?.track ?? null : null)
+  );
+}
+
+async function fetchJson<T>(path: string, init?: RequestInit) {
+  const response = await fetch(path, {
+    cache: "no-store",
+    ...init,
+    headers: {
+      ...(init?.headers ?? {}),
+      ...(init?.body ? { "Content-Type": "application/json" } : {})
+    }
+  });
+
+  const payload = (await response.json().catch(() => ({}))) as Record<string, unknown>;
+  if (!response.ok) {
+    throw new Error(typeof payload.error === "string" ? payload.error : "Request failed.");
+  }
+
+  return payload as T;
+}
+
 export function CallPageClient({ requestId, role, joinKey }: LiveCallPageClientProps) {
   const [snapshot, setSnapshot] = useState<LiveSessionSnapshot | null>(null);
   const [loading, setLoading] = useState(true);
@@ -160,8 +208,9 @@ export function CallPageClient({ requestId, role, joinKey }: LiveCallPageClientP
   const remoteAudioRef = useRef<HTMLDivElement | null>(null);
 
   const reportRoomError = useCallback((context: string, error: unknown, fallbackMessage: string) => {
+    const exactMessage = formatExactError(error, fallbackMessage);
     console.error(`[Compliment Sandwich live room][${role}] ${context}`, error);
-    setErrorMessage(error instanceof Error && error.message ? error.message : fallbackMessage);
+    setErrorMessage(exactMessage);
   }, [role]);
 
   const loadTwilioVideo = useCallback(async () => {
@@ -186,6 +235,62 @@ export function CallPageClient({ requestId, role, joinKey }: LiveCallPageClientP
       throw new Error("The live room library could not load. Refresh and try again.");
     }
   }, []);
+
+  const requestVideoPermissionProbe = useCallback(async () => {
+    if (typeof navigator === "undefined" || !navigator.mediaDevices?.getUserMedia) {
+      throw new Error("Camera access is not supported in this browser.");
+    }
+
+    let stream: MediaStream | null = null;
+
+    try {
+      stream = await navigator.mediaDevices.getUserMedia({
+        audio: false,
+        video: {
+          width: { ideal: VIDEO_CONSTRAINTS.width },
+          height: { ideal: VIDEO_CONSTRAINTS.height },
+          frameRate: { ideal: VIDEO_CONSTRAINTS.frameRate },
+          facingMode: VIDEO_CONSTRAINTS.facingMode
+        }
+      });
+      return true;
+    } catch (error) {
+      console.error(`[Compliment Sandwich live room][${role}] Camera permission request failed`, error);
+      throw error;
+    } finally {
+      stopStream(stream);
+    }
+  }, [role]);
+
+  const createVideoJoinTracks = useCallback(async (twilioVideo: TwilioVideoModule) => {
+    const localTracks: ConnectableLocalTrack[] = [];
+
+    try {
+      const audioTrack = await twilioVideo.createLocalAudioTrack();
+      localTracks.push(audioTrack);
+    } catch (error) {
+      console.error(`[Compliment Sandwich live room][${role}] Local audio track creation failed`, error);
+      stopLocalTracks(localTracks);
+      throw new Error(`Microphone error: ${formatExactError(error, "Unable to access the microphone.")}`);
+    }
+
+    try {
+      await requestVideoPermissionProbe();
+    } catch (error) {
+      stopLocalTracks(localTracks);
+      throw new Error(`Camera permission error: ${formatExactError(error, "Unable to access the camera.")}`);
+    }
+
+    try {
+      const videoTrack = await twilioVideo.createLocalVideoTrack(VIDEO_CONSTRAINTS);
+      localTracks.push(videoTrack);
+      return localTracks;
+    } catch (error) {
+      console.error(`[Compliment Sandwich live room][${role}] Local video track creation failed`, error);
+      stopLocalTracks(localTracks);
+      throw new Error(`Video track error: ${formatExactError(error, "Unable to create the camera track.")}`);
+    }
+  }, [requestVideoPermissionProbe, role]);
 
   const sessionQuery = useMemo(() => {
     const params = new URLSearchParams({ role });
@@ -285,7 +390,7 @@ export function CallPageClient({ requestId, role, joinKey }: LiveCallPageClientP
       console.error(`[Compliment Sandwich live room][${role}] Failed to refresh session snapshot`, error);
       setLoading(false);
       if (showErrors) {
-        setErrorMessage(error instanceof Error ? error.message : "Unable to load live session.");
+        setErrorMessage(formatExactError(error, "Unable to load live session."));
       }
       return null;
     }
@@ -335,7 +440,7 @@ export function CallPageClient({ requestId, role, joinKey }: LiveCallPageClientP
       attachMediaTrack(localPreviewRef.current, track, true);
       setLocalPreviewAttached(true);
     } catch (error) {
-      reportRoomError("Failed to attach local video", error, "Your camera preview could not be displayed.");
+      reportRoomError("Local video attach failed", error, "Your camera preview could not be displayed.");
     }
   }
 
@@ -351,7 +456,7 @@ export function CallPageClient({ requestId, role, joinKey }: LiveCallPageClientP
         attachMediaTrack(remoteAudioRef.current, track as unknown as AttachableTrack);
       }
     } catch (error) {
-      reportRoomError("Failed to attach remote track", error, "A participant media track could not be displayed.");
+      reportRoomError("Remote track attach failed", error, "A participant media track could not be displayed.");
     }
   }
 
@@ -364,7 +469,7 @@ export function CallPageClient({ requestId, role, joinKey }: LiveCallPageClientP
         setRemoteVideoAttached(false);
       }
     } catch (error) {
-      reportRoomError("Failed to detach remote track", error, "A participant media track could not be cleaned up.");
+      reportRoomError("Remote track detach failed", error, "A participant media track could not be cleaned up.");
     }
   }
 
@@ -378,25 +483,31 @@ export function CallPageClient({ requestId, role, joinKey }: LiveCallPageClientP
 
       participant.on("trackSubscribed", (track) => {
         try {
+          if (track.kind === "video") {
+            console.error(`[Compliment Sandwich live room][${role}] Remote video track subscribed`, {
+              participantSid: participant.sid,
+              trackSid: track.sid
+            });
+          }
           attachRemoteTrack(track);
           if (track.kind === "audio" || track.kind === "video") {
             track.on("enabled", () => {
               try {
                 attachRemoteTrack(track);
               } catch (error) {
-                reportRoomError("Failed to handle enabled remote track", error, "A remote media track could not be enabled.");
+                reportRoomError("Remote track enable handling failed", error, "A remote media track could not be enabled.");
               }
             });
             track.on("disabled", () => {
               try {
                 detachRemoteTrack(track);
               } catch (error) {
-                reportRoomError("Failed to handle disabled remote track", error, "A remote media track could not be disabled.");
+                reportRoomError("Remote track disable handling failed", error, "A remote media track could not be disabled.");
               }
             });
           }
         } catch (error) {
-          reportRoomError("Failed to subscribe remote track", error, "A participant media track could not be loaded.");
+          reportRoomError("Remote track subscribe failed", error, "A participant media track could not be loaded.");
         }
       });
 
@@ -404,11 +515,11 @@ export function CallPageClient({ requestId, role, joinKey }: LiveCallPageClientP
         try {
           detachRemoteTrack(track);
         } catch (error) {
-          reportRoomError("Failed to unsubscribe remote track", error, "A participant media track could not be removed.");
+          reportRoomError("Remote track unsubscribe failed", error, "A participant media track could not be removed.");
         }
       });
     } catch (error) {
-      reportRoomError("Failed to register participant", error, "A participant could not be attached to the room.");
+      reportRoomError("Participant registration failed", error, "A participant could not be attached to the room.");
     }
   }
 
@@ -420,6 +531,9 @@ export function CallPageClient({ requestId, role, joinKey }: LiveCallPageClientP
     setJoining(true);
     setErrorMessage(null);
     setInfoMessage(null);
+
+    const wantsVideo = role === LIVE_SESSION_OWNER_ROLE || customerVideoEnabled;
+    let localTracks: ConnectableLocalTrack[] = [];
 
     try {
       const twilioVideo = await loadTwilioVideo();
@@ -436,26 +550,43 @@ export function CallPageClient({ requestId, role, joinKey }: LiveCallPageClientP
         throw new Error("The live room token response was incomplete.");
       }
 
-      const room = await twilioVideo.connect(tokenPayload.token, {
-        name: tokenPayload.roomName,
-        audio: true,
-        video:
-          role === LIVE_SESSION_OWNER_ROLE
-            ? { width: 640, height: 360, frameRate: 24 }
-            : customerVideoEnabled
-              ? { width: 640, height: 360, frameRate: 24 }
-              : false
-      });
+      if (wantsVideo) {
+        localTracks = await createVideoJoinTracks(twilioVideo);
+      }
+
+      let room: Room;
+      try {
+        room = await twilioVideo.connect(tokenPayload.token, wantsVideo
+          ? {
+              name: tokenPayload.roomName,
+              tracks: localTracks
+            }
+          : {
+              name: tokenPayload.roomName,
+              audio: true,
+              video: false
+            });
+      } catch (error) {
+        console.error(`[Compliment Sandwich live room][${role}] Room connect with ${wantsVideo ? "video" : "audio-only"} failed`, error);
+        stopLocalTracks(localTracks);
+        throw wantsVideo
+          ? new Error(`Video join failed: ${formatExactError(error, "Unable to connect with camera enabled.")}`)
+          : error;
+      }
 
       roomRef.current = room;
       setRoomConnected(true);
 
-      const nextAudioTrack = Array.from(room.localParticipant.audioTracks.values())[0]?.track ?? null;
-      const nextVideoTrack = Array.from(room.localParticipant.videoTracks.values())[0]?.track ?? null;
+      const nextAudioTrack = findLocalAudioTrack(room, localTracks);
+      const nextVideoTrack = findLocalVideoTrack(room, localTracks);
 
       localAudioTrackRef.current = nextAudioTrack;
       localVideoTrackRef.current = nextVideoTrack;
       setAudioMuted(Boolean(nextAudioTrack && nextAudioTrack.isEnabled === false));
+
+      if (wantsVideo && !nextVideoTrack) {
+        throw new Error("The room connected but no local video track was available.");
+      }
 
       if (nextVideoTrack) {
         attachLocalVideo(nextVideoTrack);
@@ -474,7 +605,7 @@ export function CallPageClient({ requestId, role, joinKey }: LiveCallPageClientP
         try {
           registerParticipant(participant);
         } catch (error) {
-          reportRoomError("Failed on participant connect", error, "A participant could not join cleanly.");
+          reportRoomError("Participant connect handling failed", error, "A participant could not join cleanly.");
         }
       });
 
@@ -488,7 +619,7 @@ export function CallPageClient({ requestId, role, joinKey }: LiveCallPageClientP
           clearRemoteMedia();
           void refreshSnapshot(false);
         } catch (error) {
-          reportRoomError("Failed on participant disconnect", error, "The room had trouble handling a participant disconnect.");
+          reportRoomError("Participant disconnect handling failed", error, "The room had trouble handling a participant disconnect.");
         }
       });
 
@@ -497,19 +628,22 @@ export function CallPageClient({ requestId, role, joinKey }: LiveCallPageClientP
           teardownRoom(disconnectedRoom);
           void refreshSnapshot(false);
         } catch (error) {
-          reportRoomError("Failed on room disconnect", error, "The live room disconnected unexpectedly.");
+          reportRoomError("Room disconnect handling failed", error, "The live room disconnected unexpectedly.");
         }
       });
 
       await refreshSnapshot(false);
     } catch (error) {
       reportRoomError(
-        "Join room failed",
+        wantsVideo ? "Video join failed" : "Join room failed",
         error,
         role === LIVE_SESSION_OWNER_ROLE
           ? "Owner video is required to join this room."
-          : "Unable to join the live room."
+          : wantsVideo
+            ? "Unable to join the live room with camera enabled."
+            : "Unable to join the live room."
       );
+      stopLocalTracks(localTracks);
       teardownRoom(roomRef.current);
     } finally {
       setJoining(false);
@@ -542,7 +676,7 @@ export function CallPageClient({ requestId, role, joinKey }: LiveCallPageClientP
       audioTrack.disable();
       setAudioMuted(true);
     } catch (error) {
-      reportRoomError("Failed to toggle local audio", error, "Your microphone could not be updated.");
+      reportRoomError("Local audio toggle failed", error, "Your microphone could not be updated.");
     }
   }
 
@@ -576,17 +710,14 @@ export function CallPageClient({ requestId, role, joinKey }: LiveCallPageClientP
       }
 
       const twilioVideo = await loadTwilioVideo();
-      const newTrack = await twilioVideo.createLocalVideoTrack({
-        width: 640,
-        height: 360,
-        frameRate: 24
-      });
+      await requestVideoPermissionProbe();
+      const newTrack = await twilioVideo.createLocalVideoTrack(VIDEO_CONSTRAINTS);
       await room.localParticipant.publishTrack(newTrack);
       localVideoTrackRef.current = newTrack;
       attachLocalVideo(newTrack);
       setCustomerVideoEnabled(true);
     } catch (error) {
-      reportRoomError("Failed to toggle customer video", error, "Unable to turn the camera on.");
+      reportRoomError("Customer video toggle failed", error, "Unable to turn the camera on.");
     }
   }
 
@@ -610,7 +741,7 @@ export function CallPageClient({ requestId, role, joinKey }: LiveCallPageClientP
       setInfoMessage(payload.message || "Request updated.");
       await refreshSnapshot(false);
     } catch (error) {
-      reportRoomError("Failed to update owner action", error, "Unable to update request.");
+      reportRoomError("Owner action update failed", error, "Unable to update request.");
     } finally {
       setOwnerActionBusy(null);
     }
