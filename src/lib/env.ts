@@ -18,6 +18,9 @@ const serverEnvSchema = z.object({
   PAYPAL_CLIENT_SECRET: z.string().min(1).optional(),
   NEXT_PUBLIC_PAYPAL_CLIENT_ID: z.string().min(1).optional(),
   PAYPAL_WEBHOOK_ID: z.string().min(1).optional(),
+  RESEND_API_KEY: z.string().min(1).optional(),
+  OWNER_ALERT_EMAIL: z.string().email().optional(),
+  ALERT_FROM_EMAIL: z.string().min(1).optional(),
   LIVE_SESSION_OWNER_JOIN_DEADLINE_SECONDS: z.coerce.number().int().min(15).max(600).optional(),
   TWILIO_VIDEO_ROOM_TYPE: z.enum(["group", "group-small", "peer-to-peer", "go"]).optional()
 });
@@ -48,3 +51,4 @@ export function getPublicEnv() {
     paypalEnabled: Boolean(env.NEXT_PUBLIC_PAYPAL_CLIENT_ID)
   };
 }
+

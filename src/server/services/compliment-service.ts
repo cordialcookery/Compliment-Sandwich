@@ -11,7 +11,7 @@ import {
   Prisma
 } from "@prisma/client";
 
-import { sendOwnerNewRequestSms } from "@/src/server/alerts/twilio-sms";
+import { sendOwnerNewRequestEmail } from "@/src/server/alerts/resend-email";
 import { createLiveAccessToken, createLiveRoom, completeLiveRoom } from "@/src/server/live/twilio-video";
 import { getServerEnv } from "@/src/lib/env";
 import { validateMinimumAmount } from "@/src/lib/amount";
@@ -76,7 +76,7 @@ const defaultDependencies: ServiceDependencies = {
   completeRoom: completeLiveRoom,
   stripe: paymentGateways.stripe,
   paypal: paymentGateways.paypal,
-  sendOwnerAlert: sendOwnerNewRequestSms
+  sendOwnerAlert: sendOwnerNewRequestEmail
 };
 
 function latestPayment(request: RequestWithAttempts) {
@@ -1016,6 +1016,7 @@ export function createComplimentService(overrides: Partial<ServiceDependencies> 
 }
 
 export const complimentService = createComplimentService();
+
 
 
 

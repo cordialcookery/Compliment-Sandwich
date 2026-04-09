@@ -9,6 +9,7 @@ Compliment Sandwich is a funny little Windows-95-looking MVP where a customer pi
 - Stripe manual capture for cards, Apple Pay, and Google Pay
 - Optional PayPal authorize flow for Venmo
 - Twilio Video rooms for the live browser session
+- Resend for optional owner email alerts
 - Vercel-ready app structure with env-based secrets
 
 ## Local setup
@@ -30,8 +31,6 @@ Compliment Sandwich is a funny little Windows-95-looking MVP where a customer pi
 - `ADMIN_SESSION_SECRET`
 - `TWILIO_ACCOUNT_SID`
 - `TWILIO_AUTH_TOKEN`
-- `TWILIO_PHONE_NUMBER` for optional owner SMS alerts
-- `OWNER_DESTINATION_PHONE_E164` for optional owner SMS alerts
 - `TWILIO_API_KEY_SID`
 - `TWILIO_API_KEY_SECRET`
 - `TWILIO_VIDEO_ROOM_TYPE`
@@ -44,6 +43,14 @@ Compliment Sandwich is a funny little Windows-95-looking MVP where a customer pi
 - `NEXT_PUBLIC_PAYPAL_CLIENT_ID` for the Venmo browser button
 - `PAYPAL_WEBHOOK_ID` if you want webhook signature verification enabled
 
+## Optional owner alert env vars
+
+- `RESEND_API_KEY`
+- `OWNER_ALERT_EMAIL`
+- `ALERT_FROM_EMAIL`
+
+Stripe can run without PayPal configured. PayPal and Venmo features require the PayPal env vars. Owner email alerts are optional and only send when all three Resend email vars are present.
+
 ## Live room flow
 
 1. Customer creates a pending compliment request.
@@ -55,7 +62,7 @@ Compliment Sandwich is a funny little Windows-95-looking MVP where a customer pi
 7. Customer joins with camera optional and can mute or turn the camera on and off.
 8. Owner manually marks the request completed to capture the payment.
 9. If the room disconnects, the owner never joins, or the session ends before completion is marked, the authorization is canceled or voided.
-10. After payment authorization succeeds and the request becomes an active live room, the app can optionally text the owner to open the admin dashboard.
+10. After payment authorization succeeds and the request becomes an active live room, the app can optionally email the owner to open the admin dashboard.
 
 ## Payment safety
 
@@ -94,12 +101,13 @@ That split keeps the fail-closed logic explicit: room creation does not charge, 
 - The owner page requires video by default, but the customer is never forced to enable camera.
 - The browser room uses a customer join key so the customer gets room access without learning any owner-only admin URL.
 
-## SMS owner alerts
+## Owner email alerts
 
-- SMS alerts are optional.
-- If `TWILIO_PHONE_NUMBER` and `OWNER_DESTINATION_PHONE_E164` are configured, the app sends a text after payment authorization succeeds and the request becomes an active live room.
-- The text includes the amount, request id, and an admin dashboard URL based on `APP_URL`.
-- If SMS sending fails or those env vars are missing, the request flow still continues normally and the failure is only logged server-side.
+- Email alerts are optional.
+- If `RESEND_API_KEY`, `OWNER_ALERT_EMAIL`, and `ALERT_FROM_EMAIL` are configured, the app sends an email after payment authorization succeeds and the request becomes an active live room.
+- The email subject is `New compliment request`.
+- The email body includes the amount, request id, and an admin dashboard URL based on `APP_URL`.
+- If email sending fails or those env vars are missing, the request flow still continues normally and the failure is only logged server-side.
 
 ## Owner dashboard
 
@@ -128,10 +136,11 @@ That split keeps the fail-closed logic explicit: room creation does not charge, 
 4. Local development can use a direct database URL, but Vercel production should use Supabase''s pooled connection string instead of the direct `5432` host.
 5. Prefer the pooled or transaction-mode Supabase Postgres URL for Prisma in production to avoid connection exhaustion.
 6. Point Stripe webhooks to `/api/webhooks/stripe`.
-5. Point PayPal webhooks to `/api/webhooks/paypal`.
-6. Configure Twilio Video room status callbacks to hit `/api/webhooks/twilio/video` through the app-created room config.
-7. Verify Apple Pay and Google Pay in Stripe for the production domain.
-8. Deploy.
+7. Point PayPal webhooks to `/api/webhooks/paypal`.
+8. Configure Twilio Video room status callbacks to hit `/api/webhooks/twilio/video` through the app-created room config.
+9. Verify Apple Pay and Google Pay in Stripe for the production domain.
+10. In Vercel, set `RESEND_API_KEY`, `OWNER_ALERT_EMAIL`, and `ALERT_FROM_EMAIL`, and verify the sender domain in Resend before expecting alerts to send.
+11. Deploy.
 
 ## Notes
 
@@ -140,9 +149,3 @@ That split keeps the fail-closed logic explicit: room creation does not charge, 
 - Rate limiting and client request ids protect against duplicate submits.
 - Legacy Twilio voice endpoints are left in the app as disabled stubs so old phone-flow URLs fail clearly instead of silently charging.
 - When in doubt, the code does not charge the customer.
-
-
-
-
-
-
