@@ -2,7 +2,11 @@ import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 
 import { buildCustomerJoinPath } from "@/src/lib/live-session";
-import { authorizePayPalOrder } from "@/src/server/payments/paypal";
+import {
+  authorizePayPalOrder,
+  getPayPalNotConfiguredMessage,
+  isPayPalConfigured
+} from "@/src/server/payments/paypal";
 import { complimentService } from "@/src/server/services/compliment-service";
 
 const schema = z.object({
@@ -15,6 +19,10 @@ const schema = z.object({
 export const dynamic = "force-dynamic";
 
 export async function POST(request: NextRequest) {
+  if (!isPayPalConfigured()) {
+    return NextResponse.json({ error: getPayPalNotConfiguredMessage() }, { status: 503 });
+  }
+
   try {
     const body = schema.parse(await request.json());
     const authorization = await authorizePayPalOrder(body.orderId);

@@ -2,7 +2,6 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
 import { Elements, PaymentElement, useElements, useStripe } from "@stripe/react-stripe-js";
 import { loadStripe } from "@stripe/stripe-js";
 import { loadScript } from "@paypal/paypal-js";
@@ -18,7 +17,8 @@ type AvailabilityState = {
 type RequestClientProps = {
   initialAvailability: AvailabilityState;
   stripePublishableKey: string;
-  paypalClientId: string;
+  paypalClientId: string | null;
+  paypalEnabled: boolean;
 };
 
 type PreparedRequestResponse = {
@@ -241,8 +241,12 @@ function PayPalVenmoPane({
   );
 }
 
-export function RequestClient({ initialAvailability, stripePublishableKey, paypalClientId }: RequestClientProps) {
-  const router = useRouter();
+export function RequestClient({
+  initialAvailability,
+  stripePublishableKey,
+  paypalClientId,
+  paypalEnabled
+}: RequestClientProps) {
   const [availability] = useState(initialAvailability);
   const [amount, setAmount] = useState("5.00");
   const [provider, setProvider] = useState<"stripe" | "paypal">("stripe");
@@ -271,6 +275,12 @@ export function RequestClient({ initialAvailability, stripePublishableKey, paypa
     if (!Number.isFinite(numericAmount) || Math.round(numericAmount * 100) < MINIMUM_AMOUNT_CENTS) {
       setBusy(false);
       setErrorMessage("Minimum compliment price is $0.50.");
+      return;
+    }
+
+    if (provider === "paypal" && !paypalEnabled) {
+      setBusy(false);
+      setErrorMessage("Venmo is not configured on this deployment. Use the Stripe option instead.");
       return;
     }
 
@@ -311,6 +321,7 @@ export function RequestClient({ initialAvailability, stripePublishableKey, paypa
     setErrorMessage(null);
     setSuccessMessage(null);
     setClientRequestId(createBrowserRequestId());
+    setProvider("stripe");
   }
 
   function handleAuthorizedPayment(payload: ConfirmPaymentResponse) {
@@ -371,20 +382,25 @@ export function RequestClient({ initialAvailability, stripePublishableKey, paypa
             >
               Card / Apple Pay / Google Pay
             </button>
-            <button
-              type="button"
-              className="retro-button"
-              data-active={provider === "paypal"}
-              onClick={() => {
-                if (!requestId) {
-                  setProvider("paypal");
-                }
-              }}
-              disabled={Boolean(requestId)}
-            >
-              Venmo
-            </button>
+            {paypalEnabled ? (
+              <button
+                type="button"
+                className="retro-button"
+                data-active={provider === "paypal"}
+                onClick={() => {
+                  if (!requestId) {
+                    setProvider("paypal");
+                  }
+                }}
+                disabled={Boolean(requestId)}
+              >
+                Venmo
+              </button>
+            ) : null}
           </div>
+          {!paypalEnabled ? (
+            <div className="tiny muted">Venmo is not configured on this deployment. Stripe checkout still works.</div>
+          ) : null}
           {!requestId ? (
             <button type="button" className="retro-button" onClick={preparePayment} disabled={busy || !availability.availableNow}>
               {busy ? "Preparing..." : "Prepare payment"}
@@ -422,7 +438,7 @@ export function RequestClient({ initialAvailability, stripePublishableKey, paypa
               />
             </Elements>
           ) : null}
-          {requestId && provider === "paypal" && paypalOrderId ? (
+          {requestId && provider === "paypal" && paypalEnabled && paypalOrderId && paypalClientId ? (
             <PayPalVenmoPane
               paypalClientId={paypalClientId}
               orderId={paypalOrderId}
@@ -433,11 +449,9 @@ export function RequestClient({ initialAvailability, stripePublishableKey, paypa
             />
           ) : null}
           {requestId && !clientSecret && provider === "stripe" ? <div className="muted">Loading Stripe...</div> : null}
-          {requestId && !paypalOrderId && provider === "paypal" ? <div className="muted">Loading Venmo...</div> : null}
+          {requestId && provider === "paypal" && paypalEnabled && !paypalOrderId ? <div className="muted">Loading Venmo...</div> : null}
         </div>
       </section>
     </div>
   );
 }
-
-

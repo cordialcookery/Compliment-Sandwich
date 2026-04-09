@@ -2,10 +2,12 @@ import "server-only";
 
 import { CURRENCY } from "@/src/lib/constants";
 import { getServerEnv } from "@/src/lib/env";
+import { HttpError } from "@/src/lib/http";
 
 const PAYPAL_BASE_URL = process.env.NODE_ENV === "production"
   ? "https://api-m.paypal.com"
   : "https://api-m.sandbox.paypal.com";
+const PAYPAL_NOT_CONFIGURED_MESSAGE = "PayPal and Venmo are not configured on this deployment. Stripe checkout is still available.";
 
 type PayPalAccessTokenResponse = {
   access_token: string;
@@ -24,8 +26,26 @@ type PayPalOrderResponse = {
   }>;
 };
 
-async function getAccessToken() {
+function getPayPalEnv() {
   const env = getServerEnv();
+
+  if (!env.paypalEnabled || !env.PAYPAL_CLIENT_ID || !env.PAYPAL_CLIENT_SECRET) {
+    throw new HttpError(503, PAYPAL_NOT_CONFIGURED_MESSAGE);
+  }
+
+  return env;
+}
+
+export function isPayPalConfigured() {
+  return getServerEnv().paypalEnabled;
+}
+
+export function getPayPalNotConfiguredMessage() {
+  return PAYPAL_NOT_CONFIGURED_MESSAGE;
+}
+
+async function getAccessToken() {
+  const env = getPayPalEnv();
   const response = await fetch(`${PAYPAL_BASE_URL}/v1/oauth2/token`, {
     method: "POST",
     headers: {
@@ -143,6 +163,10 @@ export async function voidPayPalAuthorization(authorizationId: string) {
 
 export async function verifyPayPalWebhook(headers: Headers, body: unknown) {
   const env = getServerEnv();
+  if (!env.paypalEnabled) {
+    throw new HttpError(503, PAYPAL_NOT_CONFIGURED_MESSAGE);
+  }
+
   if (!env.PAYPAL_WEBHOOK_ID) {
     return true;
   }

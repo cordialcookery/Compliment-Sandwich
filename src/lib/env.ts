@@ -12,28 +12,37 @@ const serverEnvSchema = z.object({
   STRIPE_SECRET_KEY: z.string().min(1),
   STRIPE_WEBHOOK_SECRET: z.string().optional(),
   NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY: z.string().min(1),
-  PAYPAL_CLIENT_ID: z.string().min(1),
-  PAYPAL_CLIENT_SECRET: z.string().min(1),
-  NEXT_PUBLIC_PAYPAL_CLIENT_ID: z.string().min(1),
-  PAYPAL_WEBHOOK_ID: z.string().optional(),
+  PAYPAL_CLIENT_ID: z.string().min(1).optional(),
+  PAYPAL_CLIENT_SECRET: z.string().min(1).optional(),
+  NEXT_PUBLIC_PAYPAL_CLIENT_ID: z.string().min(1).optional(),
+  PAYPAL_WEBHOOK_ID: z.string().min(1).optional(),
   LIVE_SESSION_OWNER_JOIN_DEADLINE_SECONDS: z.coerce.number().int().min(15).max(600).optional(),
   TWILIO_VIDEO_ROOM_TYPE: z.enum(["group", "group-small", "peer-to-peer", "go"]).optional()
 });
 
 const publicEnvSchema = z.object({
   NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY: z.string().min(1),
-  NEXT_PUBLIC_PAYPAL_CLIENT_ID: z.string().min(1)
+  NEXT_PUBLIC_PAYPAL_CLIENT_ID: z.string().min(1).optional()
 });
 
 export function getServerEnv() {
   const env = serverEnvSchema.parse(process.env);
+  const paypalEnabled = Boolean(
+    env.NEXT_PUBLIC_PAYPAL_CLIENT_ID && env.PAYPAL_CLIENT_ID && env.PAYPAL_CLIENT_SECRET
+  );
+
   return {
     ...env,
+    paypalEnabled,
     LIVE_SESSION_OWNER_JOIN_DEADLINE_SECONDS: env.LIVE_SESSION_OWNER_JOIN_DEADLINE_SECONDS ?? 120,
     TWILIO_VIDEO_ROOM_TYPE: env.TWILIO_VIDEO_ROOM_TYPE ?? "group-small"
   };
 }
 
 export function getPublicEnv() {
-  return publicEnvSchema.parse(process.env);
+  const env = publicEnvSchema.parse(process.env);
+  return {
+    ...env,
+    paypalEnabled: Boolean(env.NEXT_PUBLIC_PAYPAL_CLIENT_ID)
+  };
 }

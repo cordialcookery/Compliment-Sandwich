@@ -1,7 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 
-import { createPayPalAuthorizeOrder } from "@/src/server/payments/paypal";
+import {
+  createPayPalAuthorizeOrder,
+  getPayPalNotConfiguredMessage,
+  isPayPalConfigured
+} from "@/src/server/payments/paypal";
 import { prisma } from "@/lib/prisma";
 
 const schema = z.object({
@@ -11,6 +15,10 @@ const schema = z.object({
 export const dynamic = "force-dynamic";
 
 export async function POST(request: NextRequest) {
+  if (!isPayPalConfigured()) {
+    return NextResponse.json({ error: getPayPalNotConfiguredMessage() }, { status: 503 });
+  }
+
   try {
     const body = schema.parse(await request.json());
     const complimentRequest = await prisma.complimentRequest.findUnique({
@@ -28,10 +36,10 @@ export async function POST(request: NextRequest) {
 
     return NextResponse.json({ orderId: order.id });
   } catch (error) {
+    const status = typeof error === "object" && error && "status" in error ? Number(error.status) : 400;
     return NextResponse.json(
       { error: error instanceof Error ? error.message : "Unable to create PayPal order." },
-      { status: 400 }
+      { status }
     );
   }
 }
-

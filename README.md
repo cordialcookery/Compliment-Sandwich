@@ -7,7 +7,7 @@ Compliment Sandwich is a funny little Windows-95-looking MVP where a customer pi
 - Next.js App Router with TypeScript
 - Prisma with SQLite for local development
 - Stripe manual capture for cards, Apple Pay, and Google Pay
-- PayPal authorize flow for Venmo
+- Optional PayPal authorize flow for Venmo
 - Twilio Video rooms for the live browser session
 - Vercel-ready app structure with env-based secrets
 
@@ -37,10 +37,10 @@ Compliment Sandwich is a funny little Windows-95-looking MVP where a customer pi
 - `STRIPE_SECRET_KEY`
 - `STRIPE_WEBHOOK_SECRET`
 - `NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY`
-- `PAYPAL_CLIENT_ID`
-- `PAYPAL_CLIENT_SECRET`
-- `NEXT_PUBLIC_PAYPAL_CLIENT_ID`
-- `PAYPAL_WEBHOOK_ID`
+- `PAYPAL_CLIENT_ID` for PayPal and Venmo support
+- `PAYPAL_CLIENT_SECRET` for PayPal and Venmo support
+- `NEXT_PUBLIC_PAYPAL_CLIENT_ID` for the Venmo browser button
+- `PAYPAL_WEBHOOK_ID` if you want webhook signature verification enabled
 
 ## Live room flow
 
@@ -65,6 +65,8 @@ Compliment Sandwich is a funny little Windows-95-looking MVP where a customer pi
 
 ### PayPal and Venmo
 
+- Stripe can run without PayPal being configured.
+- PayPal and Venmo features require `PAYPAL_CLIENT_ID`, `PAYPAL_CLIENT_SECRET`, and `NEXT_PUBLIC_PAYPAL_CLIENT_ID`.
 - The app creates a PayPal order with `intent: AUTHORIZE`.
 - The approved order is authorized, not captured.
 - The owner must manually mark the compliment completed before capture happens.
@@ -128,4 +130,6 @@ That split keeps the fail-closed logic explicit: room creation does not charge, 
 - Rate limiting and client request ids protect against duplicate submits.
 - Legacy Twilio voice endpoints are left in the app as disabled stubs so old phone-flow URLs fail clearly instead of silently charging.
 - When in doubt, the code does not charge the customer.
+
+
 
