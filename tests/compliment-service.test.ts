@@ -145,12 +145,13 @@ describe("compliment request lifecycle", () => {
 
   it("starts a paid self request immediately when idle", async () => {
     const harness = buildHarness();
-    const pending = await createPaidPending(harness.service, "self_paid");
+    const pending = await createPaidPending(harness.service, "self_paid", 126);
 
     const active = await authorizePaid(harness.service, pending.id, false);
 
     expect(active.status).toBe("calling");
     expect(active.requestType).toBe("self_paid");
+    expect(active.amountCents).toBe(126);
     expect(active.liveSession?.roomName).toMatch(/^room_/);
     expect(harness.createRoom).toHaveBeenCalledTimes(1);
   });

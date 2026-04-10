@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 
-import { getSelfRequestTypeForAmount, normalizeAmountToIncrement } from "@/src/lib/amount";
+import { getSelfRequestTypeForAmount, normalizeAmountForRequest } from "@/src/lib/amount";
 import { getRequestActor } from "@/src/lib/request";
 import { enforceRateLimit } from "@/src/server/services/rate-limit";
 import { complimentService } from "@/src/server/services/compliment-service";
@@ -66,14 +66,14 @@ export async function POST(request: NextRequest) {
       });
     }
 
-    const normalizedAmount = normalizeAmountToIncrement(body.amount);
+    const normalizedAmount = normalizeAmountForRequest(body.amount);
 
     if (body.requestType === "gift_paid" && normalizedAmount.amountCents === 0) {
       throw new Error("Gift compliments require a paid amount.");
     }
 
     if (body.requestType === "self_paid" && getSelfRequestTypeForAmount(normalizedAmount.amountCents) === "self_free") {
-      throw new Error("That amount rounds to $0.00. Enter your email to use the free compliment flow.");
+      throw new Error("That amount is under $0.50. Enter your email to use the free compliment flow.");
     }
 
     const complimentRequest = await complimentService.createPendingRequest({

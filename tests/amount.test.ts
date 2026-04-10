@@ -2,39 +2,35 @@ import { describe, expect, it } from "vitest";
 
 import {
   getSelfRequestTypeForAmount,
-  normalizeAmountToIncrement,
+  normalizeAmountForRequest,
   validatePaidAmountCents
 } from "@/src/lib/amount";
 
 describe("amount normalization", () => {
-  it("rounds to the nearest fifty cents with halfway values rounding up", () => {
-    expect(normalizeAmountToIncrement("0").amountCents).toBe(0);
-    expect(normalizeAmountToIncrement("0.10").amountCents).toBe(0);
-    expect(normalizeAmountToIncrement("0.24").amountCents).toBe(0);
-    expect(normalizeAmountToIncrement("0.25").amountCents).toBe(50);
-    expect(normalizeAmountToIncrement("0.26").amountCents).toBe(50);
-    expect(normalizeAmountToIncrement("0.74").amountCents).toBe(50);
-    expect(normalizeAmountToIncrement("1.26").amountCents).toBe(150);
-    expect(normalizeAmountToIncrement("3.74").amountCents).toBe(350);
-    expect(normalizeAmountToIncrement("3.75").amountCents).toBe(400);
+  it("treats anything under fifty cents as free and keeps paid amounts at exact cents", () => {
+    expect(normalizeAmountForRequest("0").amountCents).toBe(0);
+    expect(normalizeAmountForRequest("0.49").amountCents).toBe(0);
+    expect(normalizeAmountForRequest("0.50").amountCents).toBe(50);
+    expect(normalizeAmountForRequest("1.26").amountCents).toBe(126);
+    expect(normalizeAmountForRequest("3.74").amountCents).toBe(374);
   });
 
-  it("uses the rounded zero amount for the free self flow", () => {
-    const normalized = normalizeAmountToIncrement("0.10");
+  it("uses the thresholded zero amount for the free self flow", () => {
+    const normalized = normalizeAmountForRequest("0.10");
 
     expect(normalized.amountCents).toBe(0);
     expect(getSelfRequestTypeForAmount(normalized.amountCents)).toBe("self_free");
   });
 
-  it("uses the rounded paid amount for the paid self flow", () => {
-    const normalized = normalizeAmountToIncrement("1.26");
+  it("uses the exact paid amount for the paid self flow", () => {
+    const normalized = normalizeAmountForRequest("1.26");
 
-    expect(normalized.amountCents).toBe(150);
+    expect(normalized.amountCents).toBe(126);
     expect(getSelfRequestTypeForAmount(normalized.amountCents)).toBe("self_paid");
   });
 
-  it("rejects invalid negative paid amounts", () => {
-    expect(() => normalizeAmountToIncrement("-1")).toThrow("Amount cannot be negative");
-    expect(() => validatePaidAmountCents(0)).toThrow("Paid compliments must use a positive amount");
+  it("treats negative numbers as zero and still rejects zero as a paid amount", () => {
+    expect(normalizeAmountForRequest("-1").amountCents).toBe(0);
+    expect(() => validatePaidAmountCents(0)).toThrow("Paid compliments must use at least $0.50");
   });
 });

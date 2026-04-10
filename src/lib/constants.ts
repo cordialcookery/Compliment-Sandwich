@@ -1,4 +1,4 @@
-export const AMOUNT_INCREMENT_CENTS = 50;
+export const MINIMUM_PAID_AMOUNT_CENTS = 50;
 
 export const ACTIVE_REQUEST_STATUSES = [
   "calling",

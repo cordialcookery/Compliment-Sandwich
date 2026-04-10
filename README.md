@@ -99,12 +99,11 @@ The app still keeps request, payment, call, and room state separate on purpose:
 ### Get a compliment for yourself
 
 1. Customer enters one amount.
-2. The amount rounds to the nearest $0.50, with halfway values rounding up.
-3. If the rounded amount is $0.00, the request uses the free self flow.
-4. If the rounded amount is $0.50 or more, the request uses the paid self flow.
-5. Paid self requests authorize first, then either become the active live room or join the queue.
-6. If the owner marks the compliment completed, the payment captures.
-7. If the room fails, disconnects, expires, or ends first, the authorization is canceled or voided.
+2. If the amount is under $0.50, it becomes the free self flow.
+3. If the amount is $0.50 or more, the request keeps the exact entered cents for the paid self flow.
+4. Paid self requests authorize first, then either become the active live room or join the queue.
+5. If the owner marks the compliment completed, the payment captures.
+6. If the room fails, disconnects, expires, or ends first, the authorization is canceled or voided.
 
 ### Paid gift compliment
 
@@ -118,7 +117,7 @@ The app still keeps request, payment, call, and room state separate on purpose:
 
 ### Free compliment for yourself
 
-1. A self-request amount that rounds to $0.00 becomes the free flow.
+1. A self-request amount under $0.50 becomes the free flow.
 2. Customer enters an email address.
 3. The app checks free-use limits and anti-abuse metadata.
 4. No payment attempt is created.
@@ -255,7 +254,7 @@ The Vitest service tests now cover:
 - The public UI stays intentionally simple and retro.
 - The app supports one live compliment session at a time plus a waiting queue of up to 5 requests.
 - The public self-request flow uses one amount input under "Get a compliment".
-- Amounts round to the nearest $0.50, with $0.00 using the free email-link flow.
+- Amounts under $0.50 use the free email-link flow, and amounts at $0.50 or more keep the exact entered cents.
 - Paid requests may have less wait.
 - Gift compliments remain paid-only.
 - Gift links are only truly consumed on successful completion.

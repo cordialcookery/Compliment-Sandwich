@@ -9,7 +9,7 @@ import { loadScript } from "@paypal/paypal-js";
 import {
   formatCurrency,
   getSelfRequestTypeForAmount,
-  normalizeAmountToIncrement
+  normalizeAmountForRequest
 } from "@/src/lib/amount";
 
 type AvailabilityState = {
@@ -92,7 +92,7 @@ function markFreeAttemptLocally(email: string) {
 function getNormalizedAmountState(amount: string) {
   try {
     return {
-      normalized: normalizeAmountToIncrement(amount),
+      normalized: normalizeAmountForRequest(amount),
       error: null as string | null
     };
   } catch (error) {
@@ -357,13 +357,20 @@ export function RequestClient({
     : isGift && normalizedAmount.amountCents === 0
       ? "Gift compliments require a paid amount."
       : null;
-  const roundedAmountMessage = normalizedAmount
+  const amountPreviewMessage = normalizedAmount
     ? isGift && normalizedAmount.amountCents === 0
-      ? `Rounded amount: ${normalizedAmount.displayAmount}.`
+      ? `Amount to use: ${normalizedAmount.displayAmount}.`
       : isFree
-        ? `Rounded amount: ${normalizedAmount.displayAmount}. That uses the free email-link flow.`
-        : `Rounded amount: ${normalizedAmount.displayAmount}.`
+        ? `Amount to use: ${normalizedAmount.displayAmount}. Amounts under $0.50 will use the free option.`
+        : `Amount to use: ${normalizedAmount.displayAmount}.`
     : null;
+  function handleAmountBlur() {
+    const next = getNormalizedAmountState(amount);
+    if (next.normalized && next.normalized.amountCents === 0) {
+      setAmount("0.00");
+    }
+  }
+
   const paymentSubmitLabel = isGift
     ? provider === "paypal"
       ? "Authorize gift with Venmo"
@@ -526,6 +533,7 @@ export function RequestClient({
               className="retro-input"
               value={amount}
               onChange={(event) => setAmount(event.target.value)}
+              onBlur={handleAmountBlur}
               disabled={busy || Boolean(requestId)}
               placeholder="0.00"
             />
@@ -559,9 +567,9 @@ export function RequestClient({
           ) : null}
 
           <div className="stack tiny muted">
-            <div>Amounts round to the nearest $0.50. Values exactly halfway round up.</div>
-            {roundedAmountMessage ? <div>{roundedAmountMessage}</div> : null}
-            {requestMode === "self" ? <div>Enter $0.00 for the free email-link flow, or any higher amount for paid checkout.</div> : null}
+            <div>Amounts under $0.50 will use the free option.</div>
+            {amountPreviewMessage ? <div>{amountPreviewMessage}</div> : null}
+            {requestMode === "self" ? <div>Amounts at $0.50 or more stay at the entered amount for paid checkout.</div> : null}
             {isPaidSelf ? <div>After payment authorization, you either go straight to the browser-based live compliment room or wait in line if someone is already being complimented.</div> : null}
             {isGift ? <div>After payment authorization, you get a shareable link for someone else.</div> : null}
             {isFree ? <div>Free compliments are for yourself only, limited to one per person, and entered through your emailed link.</div> : null}
@@ -651,7 +659,7 @@ export function RequestClient({
               </>
             ) : (
               <>
-                <div className="muted">If your amount rounds to $0.00, this turns into the free flow.</div>
+                <div className="muted">If your amount is under $0.50, this turns into the free flow.</div>
                 <div className="tiny muted">Free compliments use an emailed link for entry.</div>
                 <div className="tiny muted">Paid requests may have less wait.</div>
               </>
@@ -660,8 +668,8 @@ export function RequestClient({
             <>
               {!requestId ? (
                 <>
-                  <div className="muted">Pick an amount, and we&apos;ll use the rounded price shown on the left before payment.</div>
-                  {normalizedAmount ? <div className="tiny muted">Current rounded amount: {normalizedAmount.displayAmount}</div> : null}
+                  <div className="muted">Pick an amount, and we&apos;ll use the exact amount shown on the left unless it falls under the free threshold.</div>
+                  {normalizedAmount ? <div className="tiny muted">Current amount to use: {normalizedAmount.displayAmount}</div> : null}
                 </>
               ) : null}
               {requestId && provider === "stripe" && clientSecret ? (

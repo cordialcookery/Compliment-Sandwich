@@ -1,9 +1,15 @@
-import { AMOUNT_INCREMENT_CENTS } from "@/src/lib/constants";
+import { MINIMUM_PAID_AMOUNT_CENTS } from "@/src/lib/constants";
 
 export type NormalizedAmount = {
   amountCents: number;
   displayAmount: string;
   isFree: boolean;
+};
+
+type ParsedAmountParts = {
+  negative: boolean;
+  numerator: bigint;
+  scale: bigint;
 };
 
 function coerceAmountString(value: unknown) {
@@ -27,7 +33,7 @@ function coerceAmountString(value: unknown) {
   return normalized;
 }
 
-function parseAmountFraction(value: unknown) {
+function parseAmountParts(value: unknown): ParsedAmountParts {
   const normalized = coerceAmountString(value);
   const match = normalized.match(/^([+-])?(?:(\d+)(?:\.(\d*))?|(?:\.(\d+)))$/);
 
@@ -35,28 +41,30 @@ function parseAmountFraction(value: unknown) {
     throw new Error("Amount must be a number.");
   }
 
-  if (match[1] === "-") {
-    throw new Error("Amount cannot be negative.");
-  }
-
   const whole = match[2] ?? "0";
   const fraction = match[3] ?? match[4] ?? "";
   const digits = `${whole}${fraction}`.replace(/^0+(?=\d)/, "") || "0";
-  const scale = 10n ** BigInt(fraction.length);
 
   return {
+    negative: match[1] === "-",
     numerator: BigInt(digits),
-    scale
+    scale: 10n ** BigInt(fraction.length)
   };
 }
 
-export function normalizeAmountToIncrement(value: unknown): NormalizedAmount {
-  const { numerator, scale } = parseAmountFraction(value);
+export function normalizeAmountForRequest(value: unknown): NormalizedAmount {
+  const parsed = parseAmountParts(value);
 
-  // Round to the nearest $0.50 using integer math so browser and server stay identical.
-  const halfDollarSteps = (4n * numerator + scale) / (2n * scale);
-  const amountCentsBigInt = halfDollarSteps * BigInt(AMOUNT_INCREMENT_CENTS);
+  // Anything below the paid threshold becomes the free flow before cent conversion.
+  if (parsed.negative || parsed.numerator === 0n || parsed.numerator * 100n < parsed.scale * BigInt(MINIMUM_PAID_AMOUNT_CENTS)) {
+    return {
+      amountCents: 0,
+      displayAmount: formatCurrency(0),
+      isFree: true
+    };
+  }
 
+  const amountCentsBigInt = (parsed.numerator * 100n + parsed.scale / 2n) / parsed.scale;
   if (amountCentsBigInt > BigInt(Number.MAX_SAFE_INTEGER)) {
     throw new Error("Amount is too large.");
   }
@@ -75,12 +83,8 @@ export function getSelfRequestTypeForAmount(amountCents: number) {
 }
 
 export function validatePaidAmountCents(amountCents: number) {
-  if (
-    !Number.isInteger(amountCents) ||
-    amountCents < AMOUNT_INCREMENT_CENTS ||
-    amountCents % AMOUNT_INCREMENT_CENTS !== 0
-  ) {
-    throw new Error("Paid compliments must use a positive amount that rounds to $0.50 increments.");
+  if (!Number.isInteger(amountCents) || amountCents < MINIMUM_PAID_AMOUNT_CENTS) {
+    throw new Error("Paid compliments must use at least $0.50.");
   }
 }
 
