@@ -78,6 +78,13 @@ type RequestWithAttempts = Prisma.ComplimentRequestGetPayload<{
 
 type QueueSnapshotState = "queued" | "promoting" | "ready" | "expired" | "canceled" | "completed";
 
+type FreeRequestCreationResult = {
+  request: RequestWithAttempts;
+  accessToken: string;
+  waitPath: string;
+  emailSent: boolean;
+};
+
 type ServiceDependencies = {
   createRoom: typeof import("@/src/server/live/twilio-video").createLiveRoom;
   completeRoom: typeof import("@/src/server/live/twilio-video").completeLiveRoom;
@@ -1005,7 +1012,7 @@ export function createComplimentService(overrides: Partial<ServiceDependencies> 
       provider: PaymentProvider;
       paymentMethodType: PaymentMethodType;
       requestType: ComplimentRequestType;
-    }) {
+    }): Promise<RequestWithAttempts> {
       validateMinimumAmount(input.amountCents);
       await ensureBootstrapData();
       if (input.requestType === "self_paid") {
@@ -1061,7 +1068,7 @@ export function createComplimentService(overrides: Partial<ServiceDependencies> 
       actor: string;
       browserMarker?: string | null;
       userAgent?: string | null;
-    }) {
+    }): Promise<FreeRequestCreationResult> {
       await ensureBootstrapData();
       await assertCanAcceptComplimentRequests();
 
@@ -1204,7 +1211,7 @@ export function createComplimentService(overrides: Partial<ServiceDependencies> 
       authorizationId?: string | null;
       idempotencyKey: string;
       customerRequestedVideo: boolean;
-    }) {
+    }): Promise<RequestWithAttempts> {
       let request: RequestWithAttempts;
 
       request = await prisma.$transaction(async (tx) => {
@@ -1639,7 +1646,7 @@ export function createComplimentService(overrides: Partial<ServiceDependencies> 
     async redeemGift(input: {
       giftToken: string;
       customerRequestedVideo: boolean;
-    }) {
+    }): Promise<RequestWithAttempts> {
       const request = await getRequestByGiftToken(input.giftToken);
 
       if (!request || !isGiftRequest(request)) {
@@ -2280,6 +2287,7 @@ export function createComplimentService(overrides: Partial<ServiceDependencies> 
 }
 
 export const complimentService = createComplimentService();
+
 
 
 

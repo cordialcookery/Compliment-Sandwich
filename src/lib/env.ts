@@ -31,6 +31,18 @@ const publicEnvSchema = z.object({
   NEXT_PUBLIC_PAYPAL_CLIENT_ID: z.string().min(1).optional()
 });
 
+const adminEnvSchema = z.object({
+  ADMIN_PASSWORD: z.string().min(8),
+  ADMIN_SESSION_SECRET: z.string().min(16)
+});
+
+const emailEnvSchema = z.object({
+  APP_URL: z.string().url(),
+  RESEND_API_KEY: z.string().min(1).optional(),
+  OWNER_ALERT_EMAIL: z.string().email().optional(),
+  ALERT_FROM_EMAIL: z.string().min(1).optional()
+});
+
 export function getServerEnv() {
   const env = serverEnvSchema.parse(process.env);
   const paypalEnabled = Boolean(
@@ -54,4 +66,12 @@ export function getPublicEnv() {
     ...env,
     paypalEnabled: Boolean(env.NEXT_PUBLIC_PAYPAL_CLIENT_ID)
   };
+}
+
+export function getAdminEnv() {
+  return adminEnvSchema.parse(process.env);
+}
+
+export function getEmailEnv() {
+  return emailEnvSchema.parse(process.env);
 }

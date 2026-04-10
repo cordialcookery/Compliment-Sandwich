@@ -5,7 +5,7 @@ import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 
 import { ADMIN_COOKIE_NAME } from "@/src/lib/constants";
-import { getServerEnv } from "@/src/lib/env";
+import { getAdminEnv } from "@/src/lib/env";
 
 type SessionPayload = {
   exp: number;
@@ -15,7 +15,7 @@ type SessionPayload = {
 function signPayload(payload: SessionPayload) {
   const encoded = Buffer.from(JSON.stringify(payload)).toString("base64url");
   const signature = crypto
-    .createHmac("sha256", getServerEnv().ADMIN_SESSION_SECRET)
+    .createHmac("sha256", getAdminEnv().ADMIN_SESSION_SECRET)
     .update(encoded)
     .digest("base64url");
   return `${encoded}.${signature}`;
@@ -32,12 +32,12 @@ function verifyToken(token: string | undefined) {
   }
 
   const expected = crypto
-    .createHmac("sha256", getServerEnv().ADMIN_SESSION_SECRET)
+    .createHmac("sha256", getAdminEnv().ADMIN_SESSION_SECRET)
     .update(encoded)
     .digest("base64url");
 
- const signatureBuffer = Buffer.from(signature, "base64url");
-const expectedBuffer = Buffer.from(expected, "base64url");
+  const signatureBuffer = Buffer.from(signature, "base64url");
+  const expectedBuffer = Buffer.from(expected, "base64url");
   if (signatureBuffer.length !== expectedBuffer.length) {
     return null;
   }

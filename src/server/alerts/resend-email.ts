@@ -3,13 +3,18 @@ import "server-only";
 import { Resend } from "resend";
 
 import { prisma } from "@/lib/prisma";
-import { getServerEnv } from "@/src/lib/env";
+import { getEmailEnv } from "@/src/lib/env";
 
 let resendClient: Resend | null = null;
 
 function getEmailClient() {
   if (!resendClient) {
-    const env = getServerEnv();
+    const env = getEmailEnv();
+
+    if (!env.RESEND_API_KEY) {
+      throw new Error("RESEND_API_KEY is required to send email.");
+    }
+
     resendClient = new Resend(env.RESEND_API_KEY);
   }
 
@@ -24,12 +29,12 @@ function formatMoney(amountCents: number) {
 }
 
 export function isOwnerAlertConfigured() {
-  const env = getServerEnv();
+  const env = getEmailEnv();
   return Boolean(env.RESEND_API_KEY && env.OWNER_ALERT_EMAIL && env.ALERT_FROM_EMAIL);
 }
 
 export function isCustomerEmailDeliveryConfigured() {
-  const env = getServerEnv();
+  const env = getEmailEnv();
   return Boolean(env.RESEND_API_KEY && env.ALERT_FROM_EMAIL);
 }
 
@@ -37,7 +42,7 @@ export async function sendOwnerNewRequestEmail(input: {
   requestId: string;
   amountCents: number;
 }) {
-  const env = getServerEnv();
+  const env = getEmailEnv();
 
   if (!isOwnerAlertConfigured()) {
     console.info("[Compliment Sandwich email] Skipping owner alert because email env vars are not configured.", {
@@ -124,7 +129,7 @@ export async function sendCustomerAccessEmail(input: {
   isFreeRequest: boolean;
   queuePriority: "paid" | "free";
 }) {
-  const env = getServerEnv();
+  const env = getEmailEnv();
 
   if (!isCustomerEmailDeliveryConfigured()) {
     console.info("[Compliment Sandwich email] Skipping customer access email because free-email env vars are not configured.", {
