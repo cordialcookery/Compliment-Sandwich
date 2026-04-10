@@ -28,6 +28,13 @@ type RequestSummary = {
   amountCents: number;
   createdAt?: string;
   status: string;
+  requestType: "self_paid" | "gift_paid" | "self_free";
+  queuePriority: "paid" | "free";
+  customerEmail?: string | null;
+  freeUseConsumedAt?: string | null;
+  giftRedemptionStatus?: string;
+  queuePosition?: number;
+  paymentStatusLabel?: string;
   paymentAttempts: Array<{ status: string }>;
   callAttempts: Array<{ status: string }>;
   liveSession: LiveSessionSummary | null;
@@ -38,8 +45,14 @@ type DashboardData = {
     availableNow: boolean;
     label: string;
     reason: string | null;
+    queueCount: number;
+    queueMax: number;
+    serviceEnabled: boolean;
   };
   activeRequest: RequestSummary | null;
+  queuedRequests: RequestSummary[];
+  queueCount: number;
+  queueMax: number;
   recentRequests: RequestSummary[];
 };
 
@@ -74,6 +87,16 @@ function describeCustomerMedia(liveSession: LiveSessionSummary | null) {
   return liveSession.customerAudioMuted ? "Audio only, mic muted" : "Audio only";
 }
 
+function prettyRequestType(requestType: RequestSummary["requestType"]) {
+  if (requestType === "gift_paid") {
+    return "paid gift";
+  }
+  if (requestType === "self_free") {
+    return "free self";
+  }
+  return "paid self";
+}
+
 export function AdminDashboard({ initialData }: { initialData: DashboardData }) {
   const router = useRouter();
   const [data, setData] = useState(initialData);
@@ -96,31 +119,12 @@ export function AdminDashboard({ initialData }: { initialData: DashboardData }) 
     return () => window.clearInterval(timer);
   }, []);
 
-  async function toggleAvailability(isAvailable: boolean) {
-    setBusyAction("availability");
-    setErrorMessage(null);
-    setMessage(null);
-    try {
-      await postJson("/api/admin/availability", { isAvailable });
-      await refreshData();
-      setMessage(isAvailable ? "Compliments are live." : "Compliments are paused.");
-    } catch (error) {
-      setErrorMessage(error instanceof Error ? error.message : "Could not update availability.");
-    } finally {
-      setBusyAction(null);
-    }
-  }
-
-  async function markRequest(path: string) {
-    if (!data.activeRequest) {
-      return;
-    }
-
+  async function runAction(path: string, body: Record<string, unknown> = {}) {
     setBusyAction(path);
     setErrorMessage(null);
     setMessage(null);
     try {
-      const payload = await postJson(path);
+      const payload = await postJson(path, body);
       setMessage(payload.message || "Request updated.");
       await refreshData();
     } catch (error) {
@@ -144,38 +148,28 @@ export function AdminDashboard({ initialData }: { initialData: DashboardData }) 
         <div className="surface stack">
           <strong>Service switch</strong>
           <div className="muted">Status: {data.availability.label}</div>
+          <div className="tiny muted">Queue: {data.queueCount} / {data.queueMax} waiting.</div>
           <div className="button-row">
-            <button
-              type="button"
-              className="retro-button"
-              onClick={() => toggleAvailability(true)}
-              disabled={busyAction === "availability" || data.availability.availableNow}
-            >
+            <button type="button" className="retro-button" onClick={() => runAction("/api/admin/availability", { isAvailable: true })} disabled={busyAction === "/api/admin/availability" || data.availability.serviceEnabled}>
               AVAILABLE
             </button>
-            <button
-              type="button"
-              className="retro-button"
-              onClick={() => toggleAvailability(false)}
-              disabled={busyAction === "availability" || !data.availability.availableNow}
-            >
+            <button type="button" className="retro-button" onClick={() => runAction("/api/admin/availability", { isAvailable: false })} disabled={busyAction === "/api/admin/availability" || !data.availability.serviceEnabled}>
               UNAVAILABLE
             </button>
           </div>
-          <div className="tiny muted">Use this before work or whenever you need the compliment kitchen closed fast.</div>
+          <div className="tiny muted">Existing queued people stay queued if you switch to unavailable.</div>
         </div>
         <div className="surface stack">
           <strong>Live room rules</strong>
           <div className="tiny muted">Owner joins on video by default.</div>
           <div className="tiny muted">Customer video is optional.</div>
+          <div className="tiny muted">Only one live compliment session runs at a time.</div>
+          <div className="tiny muted">Paid requests always go before free requests.</div>
           <div className="tiny muted">Capture only after manual completion.</div>
-          <div className="tiny muted">If the session drops before completion, do not charge.</div>
         </div>
         <div className="surface stack">
           <strong>Owner</strong>
-          <button type="button" className="retro-button" onClick={logout}>
-            Log out
-          </button>
+          <button type="button" className="retro-button" onClick={logout}>Log out</button>
         </div>
       </aside>
 
@@ -184,35 +178,23 @@ export function AdminDashboard({ initialData }: { initialData: DashboardData }) 
           <strong>Active request</strong>
           {data.activeRequest ? (
             <>
-              <div>Amount: {formatMoney(data.activeRequest.amountCents)}</div>
+              <div>Type: {prettyRequestType(data.activeRequest.requestType)}</div>
+              <div>Priority: {data.activeRequest.queuePriority}</div>
+              <div>Amount: {data.activeRequest.requestType === "self_free" ? "free" : formatMoney(data.activeRequest.amountCents)}</div>
+              <div>Email: {data.activeRequest.customerEmail || "n/a"}</div>
               <div>Request status: {data.activeRequest.status}</div>
-              <div>Payment status: {data.activeRequest.paymentAttempts[0]?.status || "n/a"}</div>
+              <div>Payment status: {data.activeRequest.paymentStatusLabel || data.activeRequest.paymentAttempts[0]?.status || "n/a"}</div>
               <div>Call status: {data.activeRequest.callAttempts[0]?.status || "n/a"}</div>
+              <div>Gift status: {data.activeRequest.giftRedemptionStatus || "n/a"}</div>
+              <div>Free slot consumed: {data.activeRequest.freeUseConsumedAt ? "yes" : "no"}</div>
               <div>Live room: {data.activeRequest.liveSession?.status || "not created"}</div>
               <div>Customer media: {describeCustomerMedia(data.activeRequest.liveSession)}</div>
-              <div className="tiny muted">
-                Owner connected: {data.activeRequest.liveSession?.ownerConnected ? "yes" : "no"}. Customer connected: {data.activeRequest.liveSession?.customerConnected ? "yes" : "no"}.
-              </div>
               <div className="button-row">
-                {data.activeRequest.liveSession ? (
-                  <Link href={`/admin/live/${data.activeRequest.id}`} className="retro-button link-button">
-                    Join live session
-                  </Link>
-                ) : null}
-                <button
-                  type="button"
-                  className="retro-button"
-                  onClick={() => markRequest(`/api/admin/requests/${data.activeRequest?.id}/complete`)}
-                  disabled={busyAction === `/api/admin/requests/${data.activeRequest?.id}/complete`}
-                >
+                {data.activeRequest.liveSession ? <Link href={`/admin/live/${data.activeRequest.id}`} className="retro-button link-button">Join live session</Link> : null}
+                <button type="button" className="retro-button" onClick={() => runAction(`/api/admin/requests/${data.activeRequest?.id}/complete`)} disabled={busyAction === `/api/admin/requests/${data.activeRequest?.id}/complete`}>
                   Mark compliment completed
                 </button>
-                <button
-                  type="button"
-                  className="retro-button"
-                  onClick={() => markRequest(`/api/admin/requests/${data.activeRequest?.id}/not-complete`)}
-                  disabled={busyAction === `/api/admin/requests/${data.activeRequest?.id}/not-complete`}
-                >
+                <button type="button" className="retro-button" onClick={() => runAction(`/api/admin/requests/${data.activeRequest?.id}/not-complete`)} disabled={busyAction === `/api/admin/requests/${data.activeRequest?.id}/not-complete`}>
                   Mark not completed
                 </button>
               </div>
@@ -221,6 +203,52 @@ export function AdminDashboard({ initialData }: { initialData: DashboardData }) 
             <div className="muted">No active compliment request right now.</div>
           )}
         </div>
+
+        <div className="surface stack">
+          <strong>Queued requests</strong>
+          <div className="tiny muted">{data.queueCount} / {data.queueMax} waiting. Paid requests keep the front of the line over free requests.</div>
+          {data.queuedRequests.length ? (
+            <div style={{ overflowX: "auto" }}>
+              <table className="request-table">
+                <thead>
+                  <tr>
+                    <th>Pos</th>
+                    <th>Type</th>
+                    <th>Priority</th>
+                    <th>Email</th>
+                    <th>Amount</th>
+                    <th>Payment</th>
+                    <th>Gift</th>
+                    <th>Free used</th>
+                    <th>Action</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {data.queuedRequests.map((request) => (
+                    <tr key={request.id}>
+                      <td>#{request.queuePosition ?? "?"}</td>
+                      <td>{prettyRequestType(request.requestType)}</td>
+                      <td>{request.queuePriority}</td>
+                      <td>{request.customerEmail || "n/a"}</td>
+                      <td>{request.requestType === "self_free" ? "free" : formatMoney(request.amountCents)}</td>
+                      <td>{request.paymentStatusLabel || request.paymentAttempts[0]?.status || "n/a"}</td>
+                      <td>{request.giftRedemptionStatus || "n/a"}</td>
+                      <td>{request.freeUseConsumedAt ? "yes" : "no"}</td>
+                      <td>
+                        <button type="button" className="retro-button" onClick={() => runAction(`/api/admin/requests/${request.id}/cancel-queue`)} disabled={busyAction === `/api/admin/requests/${request.id}/cancel-queue`}>
+                          Remove from line
+                        </button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          ) : (
+            <div className="muted">No one is waiting in line.</div>
+          )}
+        </div>
+
         <div className="surface stack">
           <strong>Recent requests</strong>
           <div style={{ overflowX: "auto" }}>
@@ -228,24 +256,30 @@ export function AdminDashboard({ initialData }: { initialData: DashboardData }) 
               <thead>
                 <tr>
                   <th>Time</th>
+                  <th>Type</th>
+                  <th>Priority</th>
+                  <th>Email</th>
                   <th>Amount</th>
                   <th>Request</th>
                   <th>Payment</th>
-                  <th>Call</th>
+                  <th>Gift</th>
+                  <th>Free used</th>
                   <th>Live room</th>
-                  <th>Customer media</th>
                 </tr>
               </thead>
               <tbody>
                 {data.recentRequests.map((request) => (
                   <tr key={request.id}>
                     <td>{request.createdAt ? new Date(request.createdAt).toLocaleString() : "n/a"}</td>
-                    <td>{formatMoney(request.amountCents)}</td>
+                    <td>{prettyRequestType(request.requestType)}</td>
+                    <td>{request.queuePriority}</td>
+                    <td>{request.customerEmail || "n/a"}</td>
+                    <td>{request.requestType === "self_free" ? "free" : formatMoney(request.amountCents)}</td>
                     <td>{request.status}</td>
-                    <td>{request.paymentAttempts[0]?.status || "n/a"}</td>
-                    <td>{request.callAttempts[0]?.status || "n/a"}</td>
+                    <td>{request.paymentStatusLabel || request.paymentAttempts[0]?.status || "n/a"}</td>
+                    <td>{request.giftRedemptionStatus || "n/a"}</td>
+                    <td>{request.freeUseConsumedAt ? "yes" : "no"}</td>
                     <td>{request.liveSession?.status || "n/a"}</td>
-                    <td>{describeCustomerMedia(request.liveSession)}</td>
                   </tr>
                 ))}
               </tbody>

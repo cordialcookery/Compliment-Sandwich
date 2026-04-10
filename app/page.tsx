@@ -15,11 +15,8 @@ export default async function HomePage() {
       <RetroWindow
         title="Compliment Sandwich.exe"
         toolbar={
-          <div className="button-row" style={{ justifyContent: "space-between" }}>
+          <div className="button-row" style={{ justifyContent: "flex-start" }}>
             <StatusPill tone={availability.availableNow ? "success" : "danger"}>{availability.label}</StatusPill>
-            <Link href="/admin/login" className="tiny">
-              owner login
-            </Link>
           </div>
         }
       >

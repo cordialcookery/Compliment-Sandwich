@@ -23,13 +23,23 @@ function formatMoney(amountCents: number) {
   }).format(amountCents / 100);
 }
 
+export function isOwnerAlertConfigured() {
+  const env = getServerEnv();
+  return Boolean(env.RESEND_API_KEY && env.OWNER_ALERT_EMAIL && env.ALERT_FROM_EMAIL);
+}
+
+export function isCustomerEmailDeliveryConfigured() {
+  const env = getServerEnv();
+  return Boolean(env.RESEND_API_KEY && env.ALERT_FROM_EMAIL);
+}
+
 export async function sendOwnerNewRequestEmail(input: {
   requestId: string;
   amountCents: number;
 }) {
   const env = getServerEnv();
 
-  if (!env.RESEND_API_KEY || !env.OWNER_ALERT_EMAIL || !env.ALERT_FROM_EMAIL) {
+  if (!isOwnerAlertConfigured()) {
     console.info("[Compliment Sandwich email] Skipping owner alert because email env vars are not configured.", {
       alertFromConfigured: Boolean(env.ALERT_FROM_EMAIL),
       ownerAlertEmailConfigured: Boolean(env.OWNER_ALERT_EMAIL),
@@ -74,10 +84,10 @@ export async function sendOwnerNewRequestEmail(input: {
 
   try {
     const result = await getEmailClient().emails.send({
-      from: env.ALERT_FROM_EMAIL,
+      from: env.ALERT_FROM_EMAIL!,
       subject,
       text,
-      to: env.OWNER_ALERT_EMAIL
+      to: env.OWNER_ALERT_EMAIL!
     });
 
     if (result.error) {
@@ -100,6 +110,73 @@ export async function sendOwnerNewRequestEmail(input: {
   } catch (error) {
     console.error("[Compliment Sandwich email] Failed to send owner alert.", error, {
       requestId: request.id
+    });
+    return { sent: false as const, reason: "send_failed" as const };
+  }
+}
+
+export async function sendCustomerAccessEmail(input: {
+  to: string;
+  requestId: string;
+  amountCents: number;
+  accessUrl: string;
+  isReadyNow: boolean;
+  isFreeRequest: boolean;
+  queuePriority: "paid" | "free";
+}) {
+  const env = getServerEnv();
+
+  if (!isCustomerEmailDeliveryConfigured()) {
+    console.info("[Compliment Sandwich email] Skipping customer access email because free-email env vars are not configured.", {
+      alertFromConfigured: Boolean(env.ALERT_FROM_EMAIL),
+      requestId: input.requestId,
+      resendConfigured: Boolean(env.RESEND_API_KEY)
+    });
+    return { sent: false as const, reason: "not_configured" as const };
+  }
+
+  const subject = input.isFreeRequest ? "Your free compliment link" : "Your compliment link";
+  const intro = input.isReadyNow
+    ? "Your compliment is ready. Open this link to join or resume the room."
+    : "Your compliment request is in line. Open this link to check the line or join when it is your turn.";
+  const amountLine = input.isFreeRequest
+    ? "Price: free"
+    : `Amount on hold: ${formatMoney(input.amountCents)}`;
+  const priorityLine = input.queuePriority === "free"
+    ? "Paid requests always move ahead of free ones."
+    : "This request stays in the paid line.";
+
+  const text = [
+    intro,
+    amountLine,
+    `Request ID: ${input.requestId}`,
+    priorityLine,
+    `Access link: ${input.accessUrl}`
+  ].join("\n");
+
+  try {
+    const result = await getEmailClient().emails.send({
+      from: env.ALERT_FROM_EMAIL!,
+      subject,
+      text,
+      to: input.to
+    });
+
+    if (result.error) {
+      throw new Error(result.error.message || "Resend failed to send the customer access email.");
+    }
+
+    console.info("[Compliment Sandwich email] Customer access email sent.", {
+      emailId: result.data?.id ?? null,
+      requestId: input.requestId,
+      to: input.to
+    });
+
+    return { sent: true as const, id: result.data?.id ?? null };
+  } catch (error) {
+    console.error("[Compliment Sandwich email] Failed to send customer access email.", error, {
+      requestId: input.requestId,
+      to: input.to
     });
     return { sent: false as const, reason: "send_failed" as const };
   }

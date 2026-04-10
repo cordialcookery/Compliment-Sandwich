@@ -10,11 +10,23 @@ datasource db {
 enum ComplimentRequestStatus {
   pending
   payment_authorized
+  queued
   calling
   answered
   completed
   failed
   canceled
+}
+
+enum ComplimentRequestType {
+  self_paid
+  gift_paid
+  self_free
+}
+
+enum RequestPriority {
+  paid
+  free
 }
 
 enum PaymentAttemptStatus {
@@ -58,6 +70,15 @@ enum LiveSessionStatus {
   failed
 }
 
+enum GiftRedemptionStatus {
+  not_gift
+  link_ready
+  attempted_while_unavailable
+  redeeming
+  redeemed
+  canceled
+}
+
 model ServiceAvailability {
   id           Int      @id @default(1)
   isAvailable  Boolean  @default(true)
@@ -76,28 +97,65 @@ model AdminConfig {
 }
 
 model ComplimentRequest {
-  id                  String                  @id @default(cuid())
-  clientRequestId     String                  @unique
-  customerPhoneE164   String?
-  customerPhoneMasked String?
-  amountCents         Int
-  status              ComplimentRequestStatus @default(pending)
-  publicMessage       String?
-  failureReason       String?
-  ownerAlertSentAt    DateTime?
-  provider            PaymentProvider?
-  paymentMethodType   PaymentMethodType       @default(unknown)
-  createdAt           DateTime                @default(now())
-  updatedAt           DateTime                @updatedAt
-  answeredAt          DateTime?
-  completedAt         DateTime?
-  failedAt            DateTime?
-  canceledAt          DateTime?
-  paymentAttempts     PaymentAttempt[]
-  callAttempts        CallAttempt[]
-  liveSession         LiveSession?
+  id                      String                  @id @default(cuid())
+  clientRequestId         String                  @unique
+  amountCents             Int
+  status                  ComplimentRequestStatus @default(pending)
+  requestType             ComplimentRequestType   @default(self_paid)
+  queuePriority           RequestPriority         @default(paid)
+  giftRedemptionStatus    GiftRedemptionStatus    @default(not_gift)
+  customerRequestedVideo  Boolean                 @default(false)
+  customerPhoneE164       String?
+  customerPhoneMasked     String?
+  customerEmail           String?
+  customerEmailNormalized String?
+  customerAccessTokenHash String?                 @unique
+  customerAccessTokenIssuedAt DateTime?
+  customerAccessEmailSentAt   DateTime?
+  queuedAt                DateTime?
+  activatedAt             DateTime?
+  queueExpiresAt          DateTime?
+  giftToken               String?                 @unique
+  giftLinkIssuedAt        DateTime?
+  giftRedeemedAt          DateTime?
+  giftLastUnavailableAt   DateTime?
+  freeUseConsumedAt       DateTime?
+  requesterIpHash         String?
+  browserMarkerHash       String?
+  userAgentHash           String?
+  publicMessage           String?
+  failureReason           String?
+  ownerAlertSentAt        DateTime?
+  provider                PaymentProvider?
+  paymentMethodType       PaymentMethodType       @default(unknown)
+  createdAt               DateTime                @default(now())
+  updatedAt               DateTime                @updatedAt
+  answeredAt              DateTime?
+  completedAt             DateTime?
+  failedAt                DateTime?
+  canceledAt              DateTime?
+  paymentAttempts         PaymentAttempt[]
+  callAttempts            CallAttempt[]
+  liveSession             LiveSession?
 
   @@index([status, createdAt])
+  @@index([status, queuePriority, queuedAt, createdAt])
+  @@index([requestType, status, createdAt])
+  @@index([customerEmailNormalized, status, createdAt])
+  @@index([giftRedemptionStatus, status, createdAt])
+}
+
+model FreeComplimentIdentity {
+  id                        String   @id @default(cuid())
+  normalizedEmail           String   @unique
+  firstRequestId            String?
+  consumedAt                DateTime?
+  lastAttemptAt             DateTime?
+  hashedIpLastSeen          String?
+  browserMarkerHashLastSeen String?
+  userAgentHashLastSeen     String?
+  createdAt                 DateTime @default(now())
+  updatedAt                 DateTime @updatedAt
 }
 
 model PaymentAttempt {
@@ -142,34 +200,34 @@ model CallAttempt {
 }
 
 model LiveSession {
-  id                   String            @id @default(cuid())
-  complimentRequestId  String            @unique
-  roomName             String            @unique
-  roomSid              String?           @unique
-  customerJoinKey      String            @unique
-  ownerIdentity        String
-  customerIdentity     String
-  status               LiveSessionStatus @default(waiting_for_owner)
-  customerRequestedVideo Boolean         @default(false)
-  ownerConnected       Boolean           @default(false)
-  customerConnected    Boolean           @default(false)
-  ownerVideoEnabled    Boolean           @default(true)
-  ownerAudioEnabled    Boolean           @default(true)
-  customerVideoEnabled Boolean           @default(false)
-  customerAudioEnabled Boolean           @default(true)
-  customerAudioMuted   Boolean           @default(false)
-  ownerJoinedAt        DateTime?
-  customerJoinedAt     DateTime?
-  ownerLeftAt          DateTime?
-  customerLeftAt       DateTime?
-  ownerJoinDeadlineAt  DateTime?
-  joinedAt             DateTime?
-  disconnectedAt       DateTime?
-  completedAt          DateTime?
-  endedReason          String?
-  createdAt            DateTime          @default(now())
-  updatedAt            DateTime          @updatedAt
-  complimentRequest    ComplimentRequest @relation(fields: [complimentRequestId], references: [id], onDelete: Cascade)
+  id                     String            @id @default(cuid())
+  complimentRequestId    String            @unique
+  roomName               String            @unique
+  roomSid                String?           @unique
+  customerJoinKey        String            @unique
+  ownerIdentity          String
+  customerIdentity       String
+  status                 LiveSessionStatus @default(waiting_for_owner)
+  customerRequestedVideo Boolean           @default(false)
+  ownerConnected         Boolean           @default(false)
+  customerConnected      Boolean           @default(false)
+  ownerVideoEnabled      Boolean           @default(true)
+  ownerAudioEnabled      Boolean           @default(true)
+  customerVideoEnabled   Boolean           @default(false)
+  customerAudioEnabled   Boolean           @default(true)
+  customerAudioMuted     Boolean           @default(false)
+  ownerJoinedAt          DateTime?
+  customerJoinedAt       DateTime?
+  ownerLeftAt            DateTime?
+  customerLeftAt         DateTime?
+  ownerJoinDeadlineAt    DateTime?
+  joinedAt               DateTime?
+  disconnectedAt         DateTime?
+  completedAt            DateTime?
+  endedReason            String?
+  createdAt              DateTime          @default(now())
+  updatedAt              DateTime          @updatedAt
+  complimentRequest      ComplimentRequest @relation(fields: [complimentRequestId], references: [id], onDelete: Cascade)
 
   @@index([status, createdAt])
 }
@@ -182,5 +240,3 @@ model RateLimitEvent {
 
   @@index([routeKey, actorHash, createdAt])
 }
-
-

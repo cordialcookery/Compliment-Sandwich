@@ -3,6 +3,7 @@ import { z } from "zod";
 
 import { hasAdminSession } from "@/src/lib/admin-session";
 import { setAvailability } from "@/src/server/services/availability";
+import { complimentService } from "@/src/server/services/compliment-service";
 
 const schema = z.object({
   isAvailable: z.boolean(),
@@ -18,5 +19,8 @@ export async function POST(request: NextRequest) {
 
   const body = schema.parse(await request.json());
   const updated = await setAvailability(body.isAvailable, body.ownerMessage);
+  if (body.isAvailable) {
+    await complimentService.promoteNextQueuedRequest();
+  }
   return NextResponse.json(updated);
 }

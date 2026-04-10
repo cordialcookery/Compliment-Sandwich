@@ -7,25 +7,43 @@ import { ensureBootstrapData } from "@/src/server/bootstrap";
 import { setAvailability } from "@/src/server/services/availability";
 import { createComplimentService } from "@/src/server/services/compliment-service";
 
-function buildService(overrides: {
-  sendOwnerAlert?: (input: { requestId: string; amountCents: number }) => Promise<unknown>;
-} = {}) {
-  return createComplimentService({
-    createRoom: vi.fn(async ({ requestId }) => ({
-      roomName: `room_${requestId}`,
-      roomSid: `RM_${randomUUID()}`
-    })),
-    completeRoom: vi.fn(async () => ({ sid: `RM_${randomUUID()}` })),
-    stripe: {
-      capture: vi.fn(async () => ({ id: `cap_${randomUUID()}` })),
-      cancel: vi.fn(async () => ({ id: `void_${randomUUID()}` }))
-    },
-    paypal: {
-      capture: vi.fn(async () => ({ id: `cap_${randomUUID()}` })),
-      cancel: vi.fn(async () => ({ id: `void_${randomUUID()}` }))
-    },
-    sendOwnerAlert: overrides.sendOwnerAlert ?? vi.fn(async () => undefined)
-  });
+function buildHarness() {
+  const createRoom = vi.fn(async ({ requestId }: { requestId: string }) => ({
+    roomName: `room_${requestId}_${randomUUID()}`,
+    roomSid: `RM_${randomUUID()}`
+  }));
+  const completeRoom = vi.fn(async () => ({ sid: `RM_${randomUUID()}` }));
+  const stripeCapture = vi.fn(async () => ({ id: `cap_${randomUUID()}` }));
+  const stripeCancel = vi.fn(async () => ({ id: `void_${randomUUID()}` }));
+  const paypalCapture = vi.fn(async () => ({ id: `cap_${randomUUID()}` }));
+  const paypalCancel = vi.fn(async () => ({ id: `void_${randomUUID()}` }));
+  const sendOwnerAlert = vi.fn(async () => undefined);
+  const sendCustomerAccessEmail = vi.fn(async () => ({ sent: true }));
+
+  return {
+    createRoom,
+    completeRoom,
+    stripeCapture,
+    stripeCancel,
+    paypalCapture,
+    paypalCancel,
+    sendOwnerAlert,
+    sendCustomerAccessEmail,
+    service: createComplimentService({
+      createRoom,
+      completeRoom,
+      stripe: {
+        capture: stripeCapture,
+        cancel: stripeCancel
+      },
+      paypal: {
+        capture: paypalCapture,
+        cancel: paypalCancel
+      },
+      sendOwnerAlert,
+      sendCustomerAccessEmail
+    })
+  };
 }
 
 async function resetDatabase() {
@@ -33,6 +51,7 @@ async function resetDatabase() {
   await prisma.callAttempt.deleteMany();
   await prisma.paymentAttempt.deleteMany();
   await prisma.complimentRequest.deleteMany();
+  await prisma.freeComplimentIdentity.deleteMany();
   await prisma.rateLimitEvent.deleteMany();
   await prisma.adminConfig.deleteMany();
   await prisma.serviceAvailability.deleteMany();
@@ -40,27 +59,81 @@ async function resetDatabase() {
   await setAvailability(true);
 }
 
-async function createAuthorizedRequest(service: ReturnType<typeof buildService>, input?: { customerRequestedVideo?: boolean }) {
-  const request = await service.createPendingRequest({
+async function createPaidPending(
+  service: ReturnType<typeof buildHarness>["service"],
+  requestType: "self_paid" | "gift_paid" = "self_paid",
+  amountCents = 500
+) {
+  return service.createPendingRequest({
     clientRequestId: randomUUID(),
-    amountCents: 500,
+    amountCents,
     customerPhoneRaw: null,
     provider: "stripe",
-    paymentMethodType: "card"
+    paymentMethodType: "card",
+    requestType
   });
+}
 
+async function authorizePaid(
+  service: ReturnType<typeof buildHarness>["service"],
+  requestId: string,
+  customerRequestedVideo = false
+) {
   return service.confirmAuthorizedPayment({
-    requestId: request.id,
+    requestId,
     provider: "stripe",
     paymentMethodType: "card",
     externalPaymentId: `pi_${randomUUID()}`,
     authorizationId: `pi_${randomUUID()}`,
     idempotencyKey: randomUUID(),
-    customerRequestedVideo: input?.customerRequestedVideo ?? false
+    customerRequestedVideo
   });
 }
 
-describe("compliment service live sessions", () => {
+async function createFree(
+  service: ReturnType<typeof buildHarness>["service"],
+  email: string,
+  customerRequestedVideo = false,
+  clientRequestId = randomUUID()
+) {
+  return service.createFreeRequest({
+    clientRequestId,
+    email,
+    customerRequestedVideo,
+    actor: "127.0.0.1",
+    browserMarker: `browser-${email}`,
+    userAgent: "vitest"
+  });
+}
+
+async function connectJoined(
+  service: ReturnType<typeof buildHarness>["service"],
+  requestId: string,
+  ownerIdentity?: string | null,
+  customerIdentity?: string | null
+) {
+  if (!ownerIdentity || !customerIdentity) {
+    const request = await prisma.complimentRequest.findUniqueOrThrow({
+      where: { id: requestId },
+      include: { liveSession: true }
+    });
+    ownerIdentity = request.liveSession?.ownerIdentity;
+    customerIdentity = request.liveSession?.customerIdentity;
+  }
+
+  await service.handleLiveRoomEvent({
+    requestId,
+    statusCallbackEvent: "participant-connected",
+    participantIdentity: customerIdentity
+  });
+  await service.handleLiveRoomEvent({
+    requestId,
+    statusCallbackEvent: "participant-connected",
+    participantIdentity: ownerIdentity
+  });
+}
+
+describe("compliment request lifecycle", () => {
   beforeEach(async () => {
     vi.clearAllMocks();
     await resetDatabase();
@@ -70,203 +143,182 @@ describe("compliment service live sessions", () => {
     await prisma.$disconnect();
   });
 
-  it("captures payment when the customer joins audio-only and the owner completes", async () => {
-    const service = buildService();
-    const request = await createAuthorizedRequest(service, { customerRequestedVideo: false });
+  it("starts a paid self request immediately when idle", async () => {
+    const harness = buildHarness();
+    const pending = await createPaidPending(harness.service, "self_paid");
 
-    await service.handleLiveRoomEvent({
-      requestId: request.id,
-      statusCallbackEvent: "participant-connected",
-      roomName: request.liveSession?.roomName,
-      roomSid: request.liveSession?.roomSid,
-      participantIdentity: request.liveSession?.customerIdentity
-    });
-
-    await service.handleLiveRoomEvent({
-      requestId: request.id,
-      statusCallbackEvent: "participant-connected",
-      roomName: request.liveSession?.roomName,
-      roomSid: request.liveSession?.roomSid,
-      participantIdentity: request.liveSession?.ownerIdentity
-    });
-
-    const completed = await service.markCompleted(request.id);
-
-    expect(completed.status).toBe("completed");
-    expect(completed.paymentAttempts[0]?.status).toBe("captured");
-    expect(completed.liveSession?.customerVideoEnabled).toBe(false);
-  });
-
-  it("keeps the request active and avoids duplicate SMS alerts on retry", async () => {
-    const sendOwnerAlert = vi.fn(async () => {
-      throw new Error("sms unavailable");
-    });
-    const service = buildService({ sendOwnerAlert });
-
-    const pending = await service.createPendingRequest({
-      clientRequestId: randomUUID(),
-      amountCents: 500,
-      customerPhoneRaw: null,
-      provider: "stripe",
-      paymentMethodType: "card"
-    });
-
-    const active = await service.confirmAuthorizedPayment({
-      requestId: pending.id,
-      provider: "stripe",
-      paymentMethodType: "card",
-      externalPaymentId: `pi_${randomUUID()}`,
-      authorizationId: `pi_${randomUUID()}`,
-      idempotencyKey: randomUUID(),
-      customerRequestedVideo: false
-    });
+    const active = await authorizePaid(harness.service, pending.id, false);
 
     expect(active.status).toBe("calling");
-    expect(sendOwnerAlert).toHaveBeenCalledTimes(1);
-    expect(sendOwnerAlert).toHaveBeenCalledWith({
-      requestId: active.id,
-      amountCents: active.amountCents
+    expect(active.requestType).toBe("self_paid");
+    expect(active.liveSession?.roomName).toMatch(/^room_/);
+    expect(harness.createRoom).toHaveBeenCalledTimes(1);
+  });
+
+  it("promotes paid queued requests ahead of free queued requests", async () => {
+    const harness = buildHarness();
+    const activePending = await createPaidPending(harness.service, "self_paid");
+    const active = await authorizePaid(harness.service, activePending.id, false);
+
+    const free = await createFree(harness.service, "free-first@example.com", false);
+    expect(free.request.status).toBe("queued");
+
+    const paidPending = await createPaidPending(harness.service, "self_paid", 900);
+    const paidQueued = await authorizePaid(harness.service, paidPending.id, true);
+    expect(paidQueued.status).toBe("queued");
+
+    const freeSnapshot = await harness.service.getQueueSnapshot({
+      requestId: free.request.id,
+      accessToken: free.accessToken
+    });
+    const paidSnapshot = await harness.service.getQueueSnapshot({
+      requestId: paidQueued.id,
+      requestKey: paidQueued.clientRequestId
     });
 
-    const retried = await service.confirmAuthorizedPayment({
-      requestId: pending.id,
-      provider: "stripe",
-      paymentMethodType: "card",
-      externalPaymentId: `pi_${randomUUID()}`,
-      authorizationId: `pi_${randomUUID()}`,
-      idempotencyKey: randomUUID(),
+    expect(paidSnapshot.position).toBe(2);
+    expect(freeSnapshot.position).toBe(3);
+
+    await harness.service.markNotCompleted(active.id);
+
+    const promotedPaid = await prisma.complimentRequest.findUniqueOrThrow({
+      where: { id: paidQueued.id },
+      include: { liveSession: true }
+    });
+    const stillQueuedFree = await prisma.complimentRequest.findUniqueOrThrow({
+      where: { id: free.request.id }
+    });
+
+    expect(promotedPaid.status).toBe("calling");
+    expect(promotedPaid.liveSession).not.toBeNull();
+    expect(stillQueuedFree.status).toBe("queued");
+  });
+
+  it("keeps paid requests FIFO within the paid tier", async () => {
+    const harness = buildHarness();
+    const activePending = await createPaidPending(harness.service, "self_paid");
+    const active = await authorizePaid(harness.service, activePending.id, false);
+
+    const firstQueuedPending = await createPaidPending(harness.service, "self_paid", 700);
+    const firstQueued = await authorizePaid(harness.service, firstQueuedPending.id, false);
+    const secondQueuedPending = await createPaidPending(harness.service, "self_paid", 800);
+    const secondQueued = await authorizePaid(harness.service, secondQueuedPending.id, false);
+
+    await harness.service.markNotCompleted(active.id);
+
+    const promotedFirst = await prisma.complimentRequest.findUniqueOrThrow({
+      where: { id: firstQueued.id }
+    });
+    const stillQueuedSecond = await prisma.complimentRequest.findUniqueOrThrow({
+      where: { id: secondQueued.id }
+    });
+
+    expect(promotedFirst.status).toBe("calling");
+    expect(stillQueuedSecond.status).toBe("queued");
+  });
+
+  it("lets a gift redemption enter the queue when the service is busy without consuming the gift", async () => {
+    const harness = buildHarness();
+    const activePending = await createPaidPending(harness.service, "self_paid");
+    await authorizePaid(harness.service, activePending.id, false);
+
+    const giftPending = await createPaidPending(harness.service, "gift_paid", 1200);
+    const gifted = await authorizePaid(harness.service, giftPending.id, false);
+
+    const queuedGift = await harness.service.redeemGift({
+      giftToken: gifted.giftToken!,
       customerRequestedVideo: false
     });
 
-    expect(retried.id).toBe(active.id);
-    expect(retried.status).toBe("calling");
-    expect(sendOwnerAlert).toHaveBeenCalledTimes(1);
+    expect(queuedGift.status).toBe("queued");
+    expect(queuedGift.giftRedemptionStatus).toBe("redeeming");
+    expect(queuedGift.liveSession).toBeNull();
+    expect(harness.createRoom).toHaveBeenCalledTimes(1);
+
+    const snapshot = await harness.service.getGiftSnapshot(gifted.giftToken!);
+    expect(snapshot.state).toBe("queued");
+
+    const restored = await harness.service.markNotCompleted(queuedGift.id);
+    expect(restored.status).toBe("payment_authorized");
+    expect(restored.giftRedemptionStatus).toBe("link_ready");
   });
 
-  it("allows the customer to join with video off", async () => {
-    const service = buildService();
-    const request = await createAuthorizedRequest(service, { customerRequestedVideo: false });
+  it("creates a free request without a payment attempt", async () => {
+    const harness = buildHarness();
+    const free = await createFree(harness.service, "first-free@example.com", true);
 
-    const updated = await service.handleLiveRoomEvent({
-      requestId: request.id,
-      statusCallbackEvent: "participant-connected",
-      participantIdentity: request.liveSession?.customerIdentity
+    const stored = await prisma.complimentRequest.findUniqueOrThrow({
+      where: { id: free.request.id },
+      include: { paymentAttempts: true, liveSession: true }
     });
 
-    expect(updated.liveSession?.customerConnected).toBe(true);
-    expect(updated.liveSession?.customerRequestedVideo).toBe(false);
-    expect(updated.liveSession?.customerVideoEnabled).toBe(false);
-    expect(updated.status).toBe("calling");
+    expect(stored.requestType).toBe("self_free");
+    expect(stored.queuePriority).toBe("free");
+    expect(stored.paymentAttempts).toHaveLength(0);
+    expect(free.emailSent).toBe(true);
   });
 
-  it("allows the customer to mute audio without auto-failing the session", async () => {
-    const service = buildService();
-    const request = await createAuthorizedRequest(service, { customerRequestedVideo: true });
+  it("blocks another free compliment after one completed for the same normalized email", async () => {
+    const harness = buildHarness();
+    const free = await createFree(harness.service, "One@Example.com", false);
 
-    await service.handleLiveRoomEvent({
-      requestId: request.id,
-      statusCallbackEvent: "participant-connected",
-      participantIdentity: request.liveSession?.customerIdentity
-    });
+    await connectJoined(harness.service, free.request.id);
+    await harness.service.markCompleted(free.request.id);
 
-    await service.handleLiveRoomEvent({
-      requestId: request.id,
-      statusCallbackEvent: "participant-connected",
-      participantIdentity: request.liveSession?.ownerIdentity
-    });
-
-    const updated = await service.handleLiveRoomEvent({
-      requestId: request.id,
-      statusCallbackEvent: "track-disabled",
-      participantIdentity: request.liveSession?.customerIdentity,
-      trackKind: "audio"
-    });
-
-    expect(updated.status).toBe("answered");
-    expect(updated.paymentAttempts[0]?.status).toBe("authorized");
-    expect(updated.liveSession?.customerAudioMuted).toBe(true);
+    await expect(createFree(harness.service, "one@example.com", false)).rejects.toThrow("already used");
   });
 
-  it("does not charge when the live call disconnects before completion", async () => {
-    const service = buildService();
-    const request = await createAuthorizedRequest(service, { customerRequestedVideo: false });
+  it("blocks another active or queued free compliment for the same email", async () => {
+    const harness = buildHarness();
+    const activePending = await createPaidPending(harness.service, "self_paid");
+    await authorizePaid(harness.service, activePending.id, false);
 
-    await service.handleLiveRoomEvent({
-      requestId: request.id,
-      statusCallbackEvent: "participant-connected",
-      participantIdentity: request.liveSession?.customerIdentity
-    });
+    await createFree(harness.service, "lineup@example.com", false);
 
-    await service.handleLiveRoomEvent({
-      requestId: request.id,
-      statusCallbackEvent: "participant-connected",
-      participantIdentity: request.liveSession?.ownerIdentity
-    });
-
-    const failed = await service.handleLiveRoomEvent({
-      requestId: request.id,
-      statusCallbackEvent: "participant-disconnected",
-      participantIdentity: request.liveSession?.customerIdentity,
-      participantDuration: 19
-    });
-
-    expect(failed.status).toBe("failed");
-    expect(failed.paymentAttempts[0]?.status).toBe("canceled");
-    expect(failed.callAttempts[0]?.status).toBe("dropped");
+    await expect(createFree(harness.service, "lineup@example.com", true)).rejects.toThrow("already has a free compliment in progress");
   });
 
-  it("does not charge when the owner never joins", async () => {
-    const service = buildService();
-    const request = await createAuthorizedRequest(service, { customerRequestedVideo: false });
+  it("does not create extra rooms for queued requests before promotion", async () => {
+    const harness = buildHarness();
+    const activePending = await createPaidPending(harness.service, "self_paid");
+    const active = await authorizePaid(harness.service, activePending.id, false);
+    const queuedPending = await createPaidPending(harness.service, "self_paid", 650);
+    const queued = await authorizePaid(harness.service, queuedPending.id, false);
 
-    await prisma.liveSession.update({
-      where: { id: request.liveSession!.id },
-      data: {
-        ownerJoinDeadlineAt: new Date(Date.now() - 1000)
-      }
-    });
+    expect(queued.status).toBe("queued");
+    expect(harness.createRoom).toHaveBeenCalledTimes(1);
 
-    const snapshot = await service.getLiveSessionSnapshot({
-      requestId: request.id,
-      role: "customer",
-      joinKey: request.liveSession?.customerJoinKey
-    });
+    await harness.service.markNotCompleted(active.id);
 
-    expect(snapshot.requestStatus).toBe("failed");
-    expect(snapshot.paymentStatus).toBe("canceled");
-    expect(snapshot.liveSession.status).toBe("failed");
+    expect(harness.createRoom).toHaveBeenCalledTimes(2);
   });
 
-  it("blocks new sessions while unavailable", async () => {
-    const service = buildService();
-    await setAvailability(false, "Closed for lunch.");
+  it("captures paid requests only after completion and never while queued", async () => {
+    const harness = buildHarness();
+    const activePending = await createPaidPending(harness.service, "self_paid");
+    const active = await authorizePaid(harness.service, activePending.id, false);
+    const queuedPending = await createPaidPending(harness.service, "self_paid", 775);
+    const queued = await authorizePaid(harness.service, queuedPending.id, false);
 
-    await expect(
-      service.createPendingRequest({
-        clientRequestId: randomUUID(),
-        amountCents: 500,
-        customerPhoneRaw: null,
-        provider: "stripe",
-        paymentMethodType: "card"
-      })
-    ).rejects.toThrow("Closed for lunch.");
-  });
+    const queuedBefore = await prisma.complimentRequest.findUniqueOrThrow({
+      where: { id: queued.id },
+      include: { paymentAttempts: { orderBy: { createdAt: "desc" } } }
+    });
+    expect(queuedBefore.paymentAttempts[0]?.status).toBe("authorized");
 
-  it("rejects amounts under fifty cents", async () => {
-    const service = buildService();
+    await connectJoined(harness.service, active.id);
+    await harness.service.markCompleted(active.id);
 
-    await expect(
-      service.createPendingRequest({
-        clientRequestId: randomUUID(),
-        amountCents: 49,
-        customerPhoneRaw: null,
-        provider: "stripe",
-        paymentMethodType: "card"
-      })
-    ).rejects.toThrow("Amount must be at least $0.50.");
+    const promoted = await prisma.complimentRequest.findUniqueOrThrow({
+      where: { id: queued.id },
+      include: { liveSession: true, paymentAttempts: { orderBy: { createdAt: "desc" } } }
+    });
+    expect(promoted.status).toBe("calling");
+    expect(promoted.paymentAttempts[0]?.status).toBe("authorized");
+
+    await connectJoined(harness.service, promoted.id, promoted.liveSession?.ownerIdentity, promoted.liveSession?.customerIdentity);
+    const completed = await harness.service.markCompleted(promoted.id);
+
+    expect(completed.paymentAttempts[0]?.status).toBe("captured");
   });
 });
-
-
-
-

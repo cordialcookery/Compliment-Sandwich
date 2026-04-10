@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 
-import { buildCustomerJoinPath } from "@/src/lib/live-session";
+import { buildCustomerJoinPath, buildGiftSharePath, buildQueueWaitPath } from "@/src/lib/live-session";
 import {
   authorizePayPalOrder,
   getPayPalNotConfiguredMessage,
@@ -36,6 +36,31 @@ export async function POST(request: NextRequest) {
       customerRequestedVideo: body.customerRequestedVideo
     });
 
+    if (complimentRequest.requestType === "gift_paid") {
+      if (!complimentRequest.giftToken) {
+        return NextResponse.json({ error: "The gift link was not created." }, { status: 502 });
+      }
+
+      const sharePath = buildGiftSharePath(complimentRequest.giftToken);
+      return NextResponse.json({
+        requestId: complimentRequest.id,
+        status: complimentRequest.status,
+        nextStep: "share_link",
+        sharePath,
+        message: "Venmo authorized. Copy the gift link and send it to someone nice."
+      });
+    }
+
+    if (complimentRequest.status === "queued") {
+      return NextResponse.json({
+        requestId: complimentRequest.id,
+        status: complimentRequest.status,
+        nextStep: "waiting_room",
+        waitPath: buildQueueWaitPath(complimentRequest.id, complimentRequest.clientRequestId, "requestKey"),
+        message: "Venmo authorized. You're in line for a compliment."
+      });
+    }
+
     if (!complimentRequest.liveSession) {
       return NextResponse.json({ error: "The live compliment room was not created." }, { status: 502 });
     }
@@ -43,6 +68,7 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({
       requestId: complimentRequest.id,
       status: complimentRequest.status,
+      nextStep: "join_room",
       joinPath: buildCustomerJoinPath(complimentRequest.id, complimentRequest.liveSession.customerJoinKey),
       message: "Venmo authorized. Opening the live compliment room."
     });

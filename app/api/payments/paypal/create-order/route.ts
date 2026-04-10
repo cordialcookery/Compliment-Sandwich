@@ -1,12 +1,12 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 
+import { prisma } from "@/lib/prisma";
 import {
   createPayPalAuthorizeOrder,
   getPayPalNotConfiguredMessage,
   isPayPalConfigured
 } from "@/src/server/payments/paypal";
-import { prisma } from "@/lib/prisma";
 
 const schema = z.object({
   requestId: z.string().min(1)
@@ -27,6 +27,10 @@ export async function POST(request: NextRequest) {
 
     if (!complimentRequest) {
       return NextResponse.json({ error: "Compliment request not found." }, { status: 404 });
+    }
+
+    if (complimentRequest.requestType === "self_free") {
+      return NextResponse.json({ error: "Free compliments do not create PayPal authorizations." }, { status: 409 });
     }
 
     const order = await createPayPalAuthorizeOrder({

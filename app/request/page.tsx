@@ -19,6 +19,7 @@ export default async function RequestPage() {
           stripePublishableKey={env.NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY}
           paypalClientId={env.NEXT_PUBLIC_PAYPAL_CLIENT_ID ?? null}
           paypalEnabled={serverEnv.paypalEnabled}
+          freeComplimentsEnabled={serverEnv.freeComplimentsEnabled}
         />
       </RetroWindow>
     </main>

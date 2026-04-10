@@ -6,12 +6,15 @@ import { Elements, PaymentElement, useElements, useStripe } from "@stripe/react-
 import { loadStripe } from "@stripe/stripe-js";
 import { loadScript } from "@paypal/paypal-js";
 
-import { MINIMUM_AMOUNT_CENTS } from "@/src/lib/constants";
-
 type AvailabilityState = {
   availableNow: boolean;
   label: string;
   reason: string | null;
+  canStartImmediately: boolean;
+  canJoinQueue: boolean;
+  hasActiveRequest: boolean;
+  queueCount: number;
+  queueMax: number;
 };
 
 type RequestClientProps = {
@@ -19,21 +22,33 @@ type RequestClientProps = {
   stripePublishableKey: string;
   paypalClientId: string | null;
   paypalEnabled: boolean;
+  freeComplimentsEnabled: boolean;
 };
+
+type RequestType = "self_paid" | "gift_paid" | "self_free";
 
 type PreparedRequestResponse = {
   request: {
     id: string;
     amountCents: number;
     status: string;
+    requestType: RequestType;
+    queuePriority: "paid" | "free";
   };
+  nextStep?: "waiting_room";
+  waitPath?: string;
+  message?: string;
+  emailSent?: boolean;
 };
 
 type ConfirmPaymentResponse = {
   requestId: string;
   status: string;
-  joinPath: string;
+  nextStep: "join_room" | "share_link" | "waiting_room";
   message: string;
+  joinPath?: string;
+  sharePath?: string;
+  waitPath?: string;
 };
 
 function createBrowserRequestId() {
@@ -42,6 +57,30 @@ function createBrowserRequestId() {
   }
 
   return Math.random().toString(36).slice(2);
+}
+
+function getFreeBrowserMarker() {
+  if (typeof window === "undefined") {
+    return "";
+  }
+
+  const existing = window.localStorage.getItem("compliment-sandwich-free-browser-marker");
+  if (existing) {
+    return existing;
+  }
+
+  const next = createBrowserRequestId();
+  window.localStorage.setItem("compliment-sandwich-free-browser-marker", next);
+  return next;
+}
+
+function markFreeAttemptLocally(email: string) {
+  if (typeof window === "undefined") {
+    return;
+  }
+
+  window.localStorage.setItem("compliment-sandwich-free-attempt", email.trim().toLowerCase());
+  document.cookie = "compliment_sandwich_free_attempted=1; path=/; max-age=31536000; SameSite=Lax";
 }
 
 async function postJson(path: string, body: Record<string, unknown>) {
@@ -65,12 +104,14 @@ function StripeCheckoutPane({
   requestId,
   customerRequestedVideo,
   onSuccess,
-  disabled
+  disabled,
+  submitLabel
 }: {
   requestId: string;
   customerRequestedVideo: boolean;
   onSuccess: (payload: ConfirmPaymentResponse) => void;
   disabled: boolean;
+  submitLabel: string;
 }) {
   const stripe = useStripe();
   const elements = useElements();
@@ -119,7 +160,7 @@ function StripeCheckoutPane({
       })) as ConfirmPaymentResponse;
       onSuccess(payload);
     } catch (error) {
-      setErrorMessage(error instanceof Error ? error.message : "Unable to start the live compliment room.");
+      setErrorMessage(error instanceof Error ? error.message : "Unable to continue the compliment flow.");
     } finally {
       setSubmitting(false);
     }
@@ -130,7 +171,7 @@ function StripeCheckoutPane({
       <PaymentElement />
       {errorMessage ? <div className="banner danger-banner">{errorMessage}</div> : null}
       <button type="submit" className="retro-button" disabled={disabled || !stripe || !elements || submitting}>
-        {submitting ? "Opening room..." : "Request compliment"}
+        {submitting ? "Authorizing..." : submitLabel}
       </button>
       <div className="tiny muted">
         Cards are authorized only. Apple Pay and Google Pay appear automatically in Stripe when the browser and domain support them.
@@ -145,7 +186,8 @@ function PayPalVenmoPane({
   requestId,
   customerRequestedVideo,
   onSuccess,
-  disabled
+  disabled,
+  submitLabel
 }: {
   paypalClientId: string;
   orderId: string;
@@ -153,6 +195,7 @@ function PayPalVenmoPane({
   customerRequestedVideo: boolean;
   onSuccess: (payload: ConfirmPaymentResponse) => void;
   disabled: boolean;
+  submitLabel: string;
 }) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const [message, setMessage] = useState<string | null>("Loading Venmo button...");
@@ -234,9 +277,7 @@ function PayPalVenmoPane({
     <div className="stack paypal-button-shell">
       {message ? <div className="banner">{message}</div> : null}
       <div ref={containerRef} />
-      <div className="tiny muted">
-        Venmo depends on PayPal merchant eligibility, device support, and the customer being signed in to Venmo or PayPal.
-      </div>
+      <div className="tiny muted">{submitLabel}</div>
     </div>
   );
 }
@@ -245,12 +286,15 @@ export function RequestClient({
   initialAvailability,
   stripePublishableKey,
   paypalClientId,
-  paypalEnabled
+  paypalEnabled,
+  freeComplimentsEnabled
 }: RequestClientProps) {
   const [availability] = useState(initialAvailability);
   const [amount, setAmount] = useState("5.00");
   const [provider, setProvider] = useState<"stripe" | "paypal">("stripe");
+  const [requestType, setRequestType] = useState<RequestType>("self_paid");
   const [customerRequestedVideo, setCustomerRequestedVideo] = useState(false);
+  const [email, setEmail] = useState("");
   const [clientRequestId, setClientRequestId] = useState(createBrowserRequestId);
   const [requestId, setRequestId] = useState<string | null>(null);
   const [clientSecret, setClientSecret] = useState<string | null>(null);
@@ -258,6 +302,8 @@ export function RequestClient({
   const [busy, setBusy] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
+  const [giftShareUrl, setGiftShareUrl] = useState<string | null>(null);
+  const [copied, setCopied] = useState(false);
   const stripePromise = useMemo(() => loadStripe(stripePublishableKey), [stripePublishableKey]);
 
   useEffect(() => {
@@ -266,29 +312,63 @@ export function RequestClient({
     }
   }, [clientRequestId]);
 
-  async function preparePayment() {
+  const isGift = requestType === "gift_paid";
+  const isFree = requestType === "self_free";
+  const selfFlowUnavailable = (requestType === "self_paid" || requestType === "self_free") && !availability.availableNow;
+  const selfFlowQueueOpen = (requestType === "self_paid" || requestType === "self_free") && availability.availableNow && !availability.canStartImmediately;
+  const paymentSubmitLabel = isGift
+    ? provider === "paypal"
+      ? "Authorize gift with Venmo"
+      : "Authorize gift payment"
+    : "Request compliment";
+
+  async function prepareRequest() {
     setBusy(true);
     setErrorMessage(null);
     setSuccessMessage(null);
-
-    const numericAmount = Number(amount);
-    if (!Number.isFinite(numericAmount) || Math.round(numericAmount * 100) < MINIMUM_AMOUNT_CENTS) {
-      setBusy(false);
-      setErrorMessage("Minimum compliment price is $0.50.");
-      return;
-    }
-
-    if (provider === "paypal" && !paypalEnabled) {
-      setBusy(false);
-      setErrorMessage("Venmo is not configured on this deployment. Use the Stripe option instead.");
-      return;
-    }
+    setCopied(false);
+    setGiftShareUrl(null);
 
     try {
+      if (isFree) {
+        if (!freeComplimentsEnabled) {
+          throw new Error("Free compliments are not configured right now.");
+        }
+        if (!email.trim()) {
+          throw new Error("Enter an email so we can send your free access link.");
+        }
+
+        const prepared = (await postJson("/api/compliments", {
+          requestType,
+          clientRequestId,
+          email,
+          customerRequestedVideo,
+          browserMarker: getFreeBrowserMarker()
+        })) as PreparedRequestResponse;
+
+        markFreeAttemptLocally(email);
+        setSuccessMessage(prepared.message || "Check your email for your free compliment link.");
+        if (prepared.waitPath) {
+          window.location.href = prepared.waitPath;
+          return;
+        }
+        return;
+      }
+
+      const numericAmount = Number(amount);
+      if (!Number.isFinite(numericAmount) || Math.round(numericAmount * 100) < 50) {
+        throw new Error("Minimum compliment price is $0.50.");
+      }
+
+      if (provider === "paypal" && !paypalEnabled) {
+        throw new Error("Venmo is not configured on this deployment. Use the Stripe option instead.");
+      }
+
       const prepared = (await postJson("/api/compliments", {
         amount,
         provider,
         paymentMethodType: provider === "paypal" ? "venmo" : "card",
+        requestType,
         clientRequestId
       })) as PreparedRequestResponse;
 
@@ -298,17 +378,17 @@ export function RequestClient({
         const stripePayload = await postJson("/api/payments/stripe/create-intent", {
           requestId: prepared.request.id
         });
-        setClientSecret(stripePayload.clientSecret);
+        setClientSecret((stripePayload as { clientSecret: string }).clientSecret);
         setPaypalOrderId(null);
       } else {
         const paypalPayload = await postJson("/api/payments/paypal/create-order", {
           requestId: prepared.request.id
         });
-        setPaypalOrderId(paypalPayload.orderId);
+        setPaypalOrderId((paypalPayload as { orderId: string }).orderId);
         setClientSecret(null);
       }
     } catch (error) {
-      setErrorMessage(error instanceof Error ? error.message : "Unable to prepare payment.");
+      setErrorMessage(error instanceof Error ? error.message : "Unable to prepare the request.");
     } finally {
       setBusy(false);
     }
@@ -320,14 +400,47 @@ export function RequestClient({
     setPaypalOrderId(null);
     setErrorMessage(null);
     setSuccessMessage(null);
+    setGiftShareUrl(null);
+    setCopied(false);
     setClientRequestId(createBrowserRequestId());
     setProvider("stripe");
+    setRequestType("self_paid");
+    setCustomerRequestedVideo(false);
+    setEmail("");
+  }
+
+  async function copyGiftLink() {
+    if (!giftShareUrl) {
+      return;
+    }
+
+    try {
+      await navigator.clipboard.writeText(giftShareUrl);
+      setCopied(true);
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : "Could not copy the gift link.");
+    }
   }
 
   function handleAuthorizedPayment(payload: ConfirmPaymentResponse) {
     setSuccessMessage(payload.message);
     setErrorMessage(null);
-    window.location.href = payload.joinPath;
+
+    if (payload.nextStep === "join_room" && payload.joinPath) {
+      window.location.href = payload.joinPath;
+      return;
+    }
+
+    if (payload.nextStep === "waiting_room" && payload.waitPath) {
+      window.location.href = payload.waitPath;
+      return;
+    }
+
+    if (payload.nextStep === "share_link" && payload.sharePath) {
+      const absoluteShareUrl = new URL(payload.sharePath, window.location.origin).toString();
+      setGiftShareUrl(absoluteShareUrl);
+      setCopied(false);
+    }
   }
 
   return (
@@ -337,78 +450,103 @@ export function RequestClient({
           Hey, I&apos;m kind of short on cash, and they say you should do what you love and you&apos;ll never work a day in your life... or whatever. So I want to give you a compliment.
         </p>
         <div className="surface stack">
-          <div className="field-row">
-            <label htmlFor="amount">How much should the compliment cost?</label>
-            <input
-              id="amount"
-              type="number"
-              min="0.50"
-              step="0.01"
-              className="retro-input"
-              value={amount}
-              onChange={(event) => setAmount(event.target.value)}
-              disabled={busy || Boolean(requestId) || !availability.availableNow}
-            />
+          <div className="payment-option-tabs">
+            <button type="button" className="retro-button" data-active={requestType === "self_paid"} onClick={() => !requestId && setRequestType("self_paid")} disabled={Boolean(requestId)}>
+              Get a compliment
+            </button>
+            <button type="button" className="retro-button" data-active={requestType === "gift_paid"} onClick={() => !requestId && setRequestType("gift_paid")} disabled={Boolean(requestId)}>
+              Send a compliment
+            </button>
+            <button type="button" className="retro-button" data-active={requestType === "self_free"} onClick={() => !requestId && setRequestType("self_free")} disabled={Boolean(requestId)}>
+              Get a free compliment
+            </button>
           </div>
-          <label className="check-row">
-            <input
-              type="checkbox"
-              checked={customerRequestedVideo}
-              onChange={(event) => setCustomerRequestedVideo(event.target.checked)}
-              disabled={busy || Boolean(requestId) || !availability.availableNow}
-            />
-            I&apos;ll probably join with my camera on
-          </label>
+
+          {!isFree ? (
+            <div className="field-row">
+              <label htmlFor="amount">How much should the compliment cost?</label>
+              <input
+                id="amount"
+                type="number"
+                min="0.50"
+                step="0.01"
+                className="retro-input"
+                value={amount}
+                onChange={(event) => setAmount(event.target.value)}
+                disabled={busy || Boolean(requestId)}
+              />
+            </div>
+          ) : null}
+
+          {(requestType === "self_paid" || requestType === "self_free") ? (
+            <label className="check-row">
+              <input
+                type="checkbox"
+                checked={customerRequestedVideo}
+                onChange={(event) => setCustomerRequestedVideo(event.target.checked)}
+                disabled={busy || Boolean(requestId) || selfFlowUnavailable}
+              />
+              I&apos;ll probably join with my camera on
+            </label>
+          ) : null}
+
+          {isFree ? (
+            <div className="field-row">
+              <label htmlFor="free-email">Email for your access link</label>
+              <input
+                id="free-email"
+                type="email"
+                className="retro-input"
+                value={email}
+                onChange={(event) => setEmail(event.target.value)}
+                disabled={busy || Boolean(requestId)}
+                placeholder="you@example.com"
+              />
+            </div>
+          ) : null}
+
           <div className="stack tiny muted">
-            <div>Minimum is $0.50.</div>
-            <div>After payment authorization, you go to a browser-based live compliment room.</div>
+            {!isFree ? <div>Minimum is $0.50.</div> : null}
+            {requestType === "self_paid" ? <div>After payment authorization, you either go straight to the browser-based live compliment room or wait in line if someone is already being complimented.</div> : null}
+            {requestType === "gift_paid" ? <div>After payment authorization, you get a shareable link for someone else.</div> : null}
+            {requestType === "self_free" ? <div>Free compliments are for yourself only, limited to one per person, and sent to your email access link.</div> : null}
+            {requestType === "self_free" ? <div>Paid requests always go ahead of free requests.</div> : null}
             <div>My camera will be on.</div>
-            <div>Your camera is optional.</div>
+            <div>{requestType === "gift_paid" ? "The recipient's camera is optional." : "Your camera is optional."}</div>
             <div>You can mute your mic or keep your camera off if you want.</div>
             <div>You are only charged if the compliment is successfully delivered.</div>
-            <div>If the room fails, drops, or ends before completion is marked, you are not charged.</div>
+            {!isFree ? <div>If the room fails, drops, or ends before completion is marked, you are not charged.</div> : null}
+            {requestType === "gift_paid" ? <div>The gift link only becomes permanently used once the compliment is actually completed.</div> : null}
           </div>
-          <div className="payment-option-tabs">
-            <button
-              type="button"
-              className="retro-button"
-              data-active={provider === "stripe"}
-              onClick={() => {
-                if (!requestId) {
-                  setProvider("stripe");
-                }
-              }}
-              disabled={Boolean(requestId)}
-            >
-              Card / Apple Pay / Google Pay
-            </button>
-            {paypalEnabled ? (
-              <button
-                type="button"
-                className="retro-button"
-                data-active={provider === "paypal"}
-                onClick={() => {
-                  if (!requestId) {
-                    setProvider("paypal");
-                  }
-                }}
-                disabled={Boolean(requestId)}
-              >
-                Venmo
+
+          {selfFlowUnavailable ? <div className="banner danger-banner">{availability.reason || availability.label}</div> : null}
+          {selfFlowQueueOpen ? <div className="banner">{availability.reason || `One compliment is already in progress. ${availability.queueCount} / ${availability.queueMax} waiting.`}</div> : null}
+          {requestType === "gift_paid" && !availability.availableNow ? <div className="banner">The live room is unavailable right now, but you can still prepare a gift link for later.</div> : null}
+          {isFree && !freeComplimentsEnabled ? <div className="banner">Free compliments are not configured on this deployment right now.</div> : null}
+
+          {!isFree ? (
+            <div className="payment-option-tabs">
+              <button type="button" className="retro-button" data-active={provider === "stripe"} onClick={() => !requestId && setProvider("stripe")} disabled={Boolean(requestId)}>
+                Card / Apple Pay / Google Pay
               </button>
-            ) : null}
-          </div>
-          {!paypalEnabled ? (
-            <div className="tiny muted">Venmo is not configured on this deployment. Stripe checkout still works.</div>
+              {paypalEnabled ? (
+                <button type="button" className="retro-button" data-active={provider === "paypal"} onClick={() => !requestId && setProvider("paypal")} disabled={Boolean(requestId)}>
+                  Venmo
+                </button>
+              ) : null}
+            </div>
           ) : null}
+
+          {!paypalEnabled && !isFree ? <div className="tiny muted">Venmo is not configured on this deployment. Stripe checkout still works.</div> : null}
+
           {!requestId ? (
-            <button type="button" className="retro-button" onClick={preparePayment} disabled={busy || !availability.availableNow}>
-              {busy ? "Preparing..." : "Prepare payment"}
+            <button type="button" className="retro-button" onClick={prepareRequest} disabled={busy || selfFlowUnavailable || (isFree && !freeComplimentsEnabled)}>
+              {busy ? "Preparing..." : isFree ? "Email my free access link" : "Prepare payment"}
             </button>
           ) : (
             <div className="button-row">
               <button type="button" className="retro-button" onClick={resetPreparation} disabled={busy}>
-                Start over
+                {giftShareUrl ? "Prepare another one" : "Start over"}
               </button>
             </div>
           )}
@@ -422,34 +560,54 @@ export function RequestClient({
       </section>
 
       <section className="stack">
-        {!availability.availableNow ? <div className="banner danger-banner">{availability.reason || availability.label}</div> : null}
         {errorMessage ? <div className="banner danger-banner">{errorMessage}</div> : null}
         {successMessage ? <div className="banner success-banner">{successMessage}</div> : null}
         <div className="surface stack">
-          <strong>Payment window</strong>
-          {!requestId ? <div className="muted">Pick an amount, choose your camera preference, and prepare a payment method.</div> : null}
-          {requestId && provider === "stripe" && clientSecret ? (
-            <Elements stripe={stripePromise} options={{ clientSecret }}>
-              <StripeCheckoutPane
-                requestId={requestId}
-                customerRequestedVideo={customerRequestedVideo}
-                disabled={busy}
-                onSuccess={handleAuthorizedPayment}
-              />
-            </Elements>
-          ) : null}
-          {requestId && provider === "paypal" && paypalEnabled && paypalOrderId && paypalClientId ? (
-            <PayPalVenmoPane
-              paypalClientId={paypalClientId}
-              orderId={paypalOrderId}
-              requestId={requestId}
-              customerRequestedVideo={customerRequestedVideo}
-              disabled={busy}
-              onSuccess={handleAuthorizedPayment}
-            />
-          ) : null}
-          {requestId && !clientSecret && provider === "stripe" ? <div className="muted">Loading Stripe...</div> : null}
-          {requestId && provider === "paypal" && paypalEnabled && !paypalOrderId ? <div className="muted">Loading Venmo...</div> : null}
+          <strong>{giftShareUrl ? "Gift link ready" : isFree ? "Free link" : "Payment window"}</strong>
+          {giftShareUrl ? (
+            <>
+              <div className="muted">Copy this link and send it to the person who should receive the compliment.</div>
+              <input className="retro-input" readOnly value={giftShareUrl} aria-label="Gift share link" />
+              <div className="button-row">
+                <button type="button" className="retro-button" onClick={copyGiftLink}>
+                  {copied ? "Copied" : "Copy link"}
+                </button>
+              </div>
+              <div className="tiny muted">The link stays usable until a real compliment is actually completed.</div>
+            </>
+          ) : isFree ? (
+            <div className="muted">Enter your email and we&apos;ll send your secure waiting-room link there. If the line is moving, paid requests always go ahead of free ones.</div>
+          ) : (
+            <>
+              {!requestId ? <div className="muted">Pick an amount, choose who this is for, and prepare a payment method.</div> : null}
+              {requestId && provider === "stripe" && clientSecret ? (
+                <Elements stripe={stripePromise} options={{ clientSecret }}>
+                  <StripeCheckoutPane
+                    requestId={requestId}
+                    customerRequestedVideo={requestType === "self_paid" ? customerRequestedVideo : false}
+                    disabled={busy}
+                    onSuccess={handleAuthorizedPayment}
+                    submitLabel={paymentSubmitLabel}
+                  />
+                </Elements>
+              ) : null}
+              {requestId && provider === "paypal" && paypalEnabled && paypalOrderId && paypalClientId ? (
+                <PayPalVenmoPane
+                  paypalClientId={paypalClientId}
+                  orderId={paypalOrderId}
+                  requestId={requestId}
+                  customerRequestedVideo={requestType === "self_paid" ? customerRequestedVideo : false}
+                  disabled={busy}
+                  onSuccess={handleAuthorizedPayment}
+                  submitLabel={isGift
+                    ? "Venmo authorizes the gift now, and the charge only captures if the recipient actually gets the compliment later."
+                    : "Venmo authorizes now, and the charge only captures if the compliment is actually completed."}
+                />
+              ) : null}
+              {requestId && !clientSecret && provider === "stripe" ? <div className="muted">Loading Stripe...</div> : null}
+              {requestId && provider === "paypal" && paypalEnabled && !paypalOrderId ? <div className="muted">Loading Venmo...</div> : null}
+            </>
+          )}
         </div>
       </section>
     </div>

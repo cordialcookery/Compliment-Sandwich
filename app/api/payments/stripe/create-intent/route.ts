@@ -1,8 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 
-import { createStripeManualCaptureIntent } from "@/src/server/payments/stripe";
 import { prisma } from "@/lib/prisma";
+import { createStripeManualCaptureIntent } from "@/src/server/payments/stripe";
 
 const schema = z.object({
   requestId: z.string().min(1)
@@ -19,6 +19,10 @@ export async function POST(request: NextRequest) {
 
     if (!complimentRequest) {
       return NextResponse.json({ error: "Compliment request not found." }, { status: 404 });
+    }
+
+    if (complimentRequest.requestType === "self_free") {
+      return NextResponse.json({ error: "Free compliments do not create Stripe payment intents." }, { status: 409 });
     }
 
     const paymentIntent = await createStripeManualCaptureIntent({
@@ -38,4 +42,3 @@ export async function POST(request: NextRequest) {
     );
   }
 }
-

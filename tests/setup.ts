@@ -47,3 +47,8 @@ process.env.PAYPAL_CLIENT_ID = process.env.PAYPAL_CLIENT_ID || "paypal-client-id
 process.env.PAYPAL_CLIENT_SECRET = process.env.PAYPAL_CLIENT_SECRET || "paypal-client-secret";
 process.env.NEXT_PUBLIC_PAYPAL_CLIENT_ID = process.env.NEXT_PUBLIC_PAYPAL_CLIENT_ID || "paypal-client-id";
 process.env.PAYPAL_WEBHOOK_ID = process.env.PAYPAL_WEBHOOK_ID || "paypal-webhook-id";
+
+process.env.RESEND_API_KEY = process.env.RESEND_API_KEY || 're_test_placeholder';
+process.env.ALERT_FROM_EMAIL = process.env.ALERT_FROM_EMAIL || 'alerts@example.com';
+process.env.OWNER_ALERT_EMAIL = process.env.OWNER_ALERT_EMAIL || 'owner@example.com';
+
