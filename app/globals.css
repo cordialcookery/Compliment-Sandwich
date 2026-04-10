@@ -290,6 +290,40 @@ select {
   background: #ffffcc;
 }
 
+.payment-method-heading {
+  font-weight: 700;
+}
+
+.payment-method-grid {
+  display: grid;
+  gap: 8px;
+}
+
+.payment-method-card {
+  padding: 10px 12px;
+  border: 2px solid var(--panel-shadow);
+  border-top-color: white;
+  border-left-color: white;
+  background: #efefef;
+  box-shadow: inset -2px -2px 0 var(--panel-dark);
+}
+
+.payment-method-card[data-selected="true"] {
+  background: #ffffcc;
+}
+
+.stripe-element-shell {
+  display: grid;
+  gap: 10px;
+  padding: 12px;
+  border: 2px solid var(--panel-shadow);
+  border-top-color: white;
+  border-left-color: white;
+  background: white;
+  box-shadow: inset 2px 2px 0 #8a8a8a;
+  min-height: 96px;
+}
+
 .sandwich-art {
   width: min(240px, 70vw);
   image-rendering: pixelated;

@@ -137,6 +137,7 @@ function StripeCheckoutPane({
   const elements = useElements();
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
+  const [paymentElementReady, setPaymentElementReady] = useState(false);
 
   async function handleSubmit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -188,13 +189,16 @@ function StripeCheckoutPane({
 
   return (
     <form className="stack" onSubmit={handleSubmit}>
-      <PaymentElement />
+      <div className="stripe-element-shell">
+        {!paymentElementReady ? <div className="tiny muted">Loading secure Stripe checkout...</div> : null}
+        <PaymentElement onReady={() => setPaymentElementReady(true)} onLoadError={(event) => setErrorMessage(event.error.message || "Stripe checkout could not load.")} />
+      </div>
       {errorMessage ? <div className="banner danger-banner">{errorMessage}</div> : null}
-      <button type="submit" className="retro-button" disabled={disabled || !stripe || !elements || submitting}>
+      <button type="submit" className="retro-button" disabled={disabled || !stripe || !elements || !paymentElementReady || submitting}>
         {submitting ? "Authorizing..." : submitLabel}
       </button>
       <div className="tiny muted">
-        Cards are authorized only. Apple Pay and Google Pay appear automatically in Stripe when the browser and domain support them.
+        Stripe controls the secure card and wallet UI here. Apple Pay and Google Pay only appear if Stripe confirms the browser, device, and domain support them.
       </div>
     </form>
   );
@@ -589,15 +593,25 @@ export function RequestClient({
           {isFree && !freeComplimentsEnabled ? <div className="banner">Free compliments are not configured on this deployment right now.</div> : null}
 
           {isPaidFlow ? (
-            <div className="payment-option-tabs">
-              <button type="button" className="retro-button" data-active={provider === "stripe"} onClick={() => !requestId && setProvider("stripe")} disabled={Boolean(requestId)}>
-                Card / Apple Pay / Google Pay
-              </button>
-              {paypalEnabled ? (
-                <button type="button" className="retro-button" data-active={provider === "paypal"} onClick={() => !requestId && setProvider("paypal")} disabled={Boolean(requestId)}>
-                  Venmo
-                </button>
-              ) : null}
+            <div className="stack">
+              <div className="payment-method-heading">Payment method</div>
+              <div className="payment-method-grid">
+                <div className="payment-method-card" data-selected={provider === "stripe"}>
+                  <strong>Stripe checkout</strong>
+                  <div className="tiny muted">Card / Apple Pay / Google Pay</div>
+                </div>
+                {paypalEnabled ? (
+                  <button
+                    type="button"
+                    className="retro-button"
+                    data-active={provider === "paypal"}
+                    onClick={() => !requestId && setProvider(provider === "paypal" ? "stripe" : "paypal")}
+                    disabled={Boolean(requestId) || busy}
+                  >
+                    {provider === "paypal" ? "Use Stripe checkout instead" : "Use Venmo instead"}
+                  </button>
+                ) : null}
+              </div>
             </div>
           ) : null}
 
@@ -668,7 +682,7 @@ export function RequestClient({
             <>
               {!requestId ? (
                 <>
-                  <div className="muted">Pick an amount, and we&apos;ll use the exact amount shown on the left unless it falls under the free threshold.</div>
+                  <div className="muted">Pick an amount, then click Prepare payment to load Stripe's real secure checkout UI here.</div>
                   {normalizedAmount ? <div className="tiny muted">Current amount to use: {normalizedAmount.displayAmount}</div> : null}
                 </>
               ) : null}
