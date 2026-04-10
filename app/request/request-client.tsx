@@ -6,6 +6,12 @@ import { Elements, PaymentElement, useElements, useStripe } from "@stripe/react-
 import { loadStripe } from "@stripe/stripe-js";
 import { loadScript } from "@paypal/paypal-js";
 
+import {
+  formatCurrency,
+  getSelfRequestTypeForAmount,
+  normalizeAmountToIncrement
+} from "@/src/lib/amount";
+
 type AvailabilityState = {
   availableNow: boolean;
   label: string;
@@ -25,6 +31,7 @@ type RequestClientProps = {
   freeComplimentsEnabled: boolean;
 };
 
+type RequestMode = "self" | "gift";
 type RequestType = "self_paid" | "gift_paid" | "self_free";
 
 type PreparedRequestResponse = {
@@ -35,8 +42,7 @@ type PreparedRequestResponse = {
     requestType: RequestType;
     queuePriority: "paid" | "free";
   };
-  nextStep?: "waiting_room";
-  waitPath?: string;
+  nextStep?: "email_confirmation";
   message?: string;
   emailSent?: boolean;
 };
@@ -81,6 +87,20 @@ function markFreeAttemptLocally(email: string) {
 
   window.localStorage.setItem("compliment-sandwich-free-attempt", email.trim().toLowerCase());
   document.cookie = "compliment_sandwich_free_attempted=1; path=/; max-age=31536000; SameSite=Lax";
+}
+
+function getNormalizedAmountState(amount: string) {
+  try {
+    return {
+      normalized: normalizeAmountToIncrement(amount),
+      error: null as string | null
+    };
+  } catch (error) {
+    return {
+      normalized: null,
+      error: error instanceof Error ? error.message : "Please enter an amount."
+    };
+  }
 }
 
 async function postJson(path: string, body: Record<string, unknown>) {
@@ -290,9 +310,9 @@ export function RequestClient({
   freeComplimentsEnabled
 }: RequestClientProps) {
   const [availability] = useState(initialAvailability);
+  const [requestMode, setRequestMode] = useState<RequestMode>("self");
   const [amount, setAmount] = useState("5.00");
   const [provider, setProvider] = useState<"stripe" | "paypal">("stripe");
-  const [requestType, setRequestType] = useState<RequestType>("self_paid");
   const [customerRequestedVideo, setCustomerRequestedVideo] = useState(false);
   const [email, setEmail] = useState("");
   const [clientRequestId, setClientRequestId] = useState(createBrowserRequestId);
@@ -304,7 +324,10 @@ export function RequestClient({
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
   const [giftShareUrl, setGiftShareUrl] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
+  const [freeEmailSent, setFreeEmailSent] = useState<boolean | null>(null);
   const stripePromise = useMemo(() => loadStripe(stripePublishableKey), [stripePublishableKey]);
+  const amountState = useMemo(() => getNormalizedAmountState(amount), [amount]);
+  const normalizedAmount = amountState.normalized;
 
   useEffect(() => {
     if (!clientRequestId) {
@@ -312,10 +335,35 @@ export function RequestClient({
     }
   }, [clientRequestId]);
 
-  const isGift = requestType === "gift_paid";
-  const isFree = requestType === "self_free";
-  const selfFlowUnavailable = (requestType === "self_paid" || requestType === "self_free") && !availability.availableNow;
-  const selfFlowQueueOpen = (requestType === "self_paid" || requestType === "self_free") && availability.availableNow && !availability.canStartImmediately;
+  const isGift = requestMode === "gift";
+  const resolvedRequestType: RequestType | null = useMemo(() => {
+    if (isGift) {
+      return "gift_paid";
+    }
+
+    if (!normalizedAmount) {
+      return null;
+    }
+
+    return getSelfRequestTypeForAmount(normalizedAmount.amountCents);
+  }, [isGift, normalizedAmount]);
+  const isFree = resolvedRequestType === "self_free";
+  const isPaidSelf = resolvedRequestType === "self_paid";
+  const isPaidFlow = resolvedRequestType === "gift_paid" || resolvedRequestType === "self_paid";
+  const selfFlowUnavailable = requestMode === "self" && !availability.availableNow;
+  const selfFlowQueueOpen = requestMode === "self" && availability.availableNow && !availability.canStartImmediately;
+  const amountValidationMessage = !normalizedAmount
+    ? amountState.error
+    : isGift && normalizedAmount.amountCents === 0
+      ? "Gift compliments require a paid amount."
+      : null;
+  const roundedAmountMessage = normalizedAmount
+    ? isGift && normalizedAmount.amountCents === 0
+      ? `Rounded amount: ${normalizedAmount.displayAmount}.`
+      : isFree
+        ? `Rounded amount: ${normalizedAmount.displayAmount}. That uses the free email-link flow.`
+        : `Rounded amount: ${normalizedAmount.displayAmount}.`
+    : null;
   const paymentSubmitLabel = isGift
     ? provider === "paypal"
       ? "Authorize gift with Venmo"
@@ -328,9 +376,18 @@ export function RequestClient({
     setSuccessMessage(null);
     setCopied(false);
     setGiftShareUrl(null);
+    setFreeEmailSent(null);
 
     try {
-      if (isFree) {
+      if (!normalizedAmount) {
+        throw new Error(amountState.error || "Please enter an amount.");
+      }
+
+      if (isGift && normalizedAmount.amountCents === 0) {
+        throw new Error("Gift compliments require a paid amount.");
+      }
+
+      if (requestMode === "self" && isFree) {
         if (!freeComplimentsEnabled) {
           throw new Error("Free compliments are not configured right now.");
         }
@@ -339,7 +396,7 @@ export function RequestClient({
         }
 
         const prepared = (await postJson("/api/compliments", {
-          requestType,
+          requestType: "self_free",
           clientRequestId,
           email,
           customerRequestedVideo,
@@ -347,17 +404,16 @@ export function RequestClient({
         })) as PreparedRequestResponse;
 
         markFreeAttemptLocally(email);
-        setSuccessMessage(prepared.message || "Check your email for your free compliment link.");
-        if (prepared.waitPath) {
-          window.location.href = prepared.waitPath;
-          return;
+        setRequestId(prepared.request.id);
+        setClientSecret(null);
+        setPaypalOrderId(null);
+        setFreeEmailSent(Boolean(prepared.emailSent));
+        if (prepared.emailSent) {
+          setSuccessMessage(prepared.message || "Check your email for your access link.");
+        } else {
+          setErrorMessage(prepared.message || "We could not confirm the email delivery.");
         }
         return;
-      }
-
-      const numericAmount = Number(amount);
-      if (!Number.isFinite(numericAmount) || Math.round(numericAmount * 100) < 50) {
-        throw new Error("Minimum compliment price is $0.50.");
       }
 
       if (provider === "paypal" && !paypalEnabled) {
@@ -368,7 +424,7 @@ export function RequestClient({
         amount,
         provider,
         paymentMethodType: provider === "paypal" ? "venmo" : "card",
-        requestType,
+        requestType: isGift ? "gift_paid" : "self_paid",
         clientRequestId
       })) as PreparedRequestResponse;
 
@@ -402,9 +458,11 @@ export function RequestClient({
     setSuccessMessage(null);
     setGiftShareUrl(null);
     setCopied(false);
+    setFreeEmailSent(null);
     setClientRequestId(createBrowserRequestId());
     setProvider("stripe");
-    setRequestType("self_paid");
+    setRequestMode("self");
+    setAmount("5.00");
     setCustomerRequestedVideo(false);
     setEmail("");
   }
@@ -451,34 +509,29 @@ export function RequestClient({
         </p>
         <div className="surface stack">
           <div className="payment-option-tabs">
-            <button type="button" className="retro-button" data-active={requestType === "self_paid"} onClick={() => !requestId && setRequestType("self_paid")} disabled={Boolean(requestId)}>
+            <button type="button" className="retro-button" data-active={requestMode === "self"} onClick={() => !requestId && setRequestMode("self")} disabled={Boolean(requestId)}>
               Get a compliment
             </button>
-            <button type="button" className="retro-button" data-active={requestType === "gift_paid"} onClick={() => !requestId && setRequestType("gift_paid")} disabled={Boolean(requestId)}>
+            <button type="button" className="retro-button" data-active={requestMode === "gift"} onClick={() => !requestId && setRequestMode("gift")} disabled={Boolean(requestId)}>
               Send a compliment
-            </button>
-            <button type="button" className="retro-button" data-active={requestType === "self_free"} onClick={() => !requestId && setRequestType("self_free")} disabled={Boolean(requestId)}>
-              Get a free compliment
             </button>
           </div>
 
-          {!isFree ? (
-            <div className="field-row">
-              <label htmlFor="amount">How much should the compliment cost?</label>
-              <input
-                id="amount"
-                type="number"
-                min="0.50"
-                step="0.01"
-                className="retro-input"
-                value={amount}
-                onChange={(event) => setAmount(event.target.value)}
-                disabled={busy || Boolean(requestId)}
-              />
-            </div>
-          ) : null}
+          <div className="field-row">
+            <label htmlFor="amount">{isGift ? "How much should the gift compliment cost?" : "How much should the compliment cost?"}</label>
+            <input
+              id="amount"
+              type="text"
+              inputMode="decimal"
+              className="retro-input"
+              value={amount}
+              onChange={(event) => setAmount(event.target.value)}
+              disabled={busy || Boolean(requestId)}
+              placeholder="0.00"
+            />
+          </div>
 
-          {(requestType === "self_paid" || requestType === "self_free") ? (
+          {requestMode === "self" ? (
             <label className="check-row">
               <input
                 type="checkbox"
@@ -506,25 +559,28 @@ export function RequestClient({
           ) : null}
 
           <div className="stack tiny muted">
-            {!isFree ? <div>Minimum is $0.50.</div> : null}
-            {requestType === "self_paid" ? <div>After payment authorization, you either go straight to the browser-based live compliment room or wait in line if someone is already being complimented.</div> : null}
-            {requestType === "gift_paid" ? <div>After payment authorization, you get a shareable link for someone else.</div> : null}
-            {requestType === "self_free" ? <div>Free compliments are for yourself only, limited to one per person, and sent to your email access link.</div> : null}
-            {requestType === "self_free" ? <div>Paid requests always go ahead of free requests.</div> : null}
+            <div>Amounts round to the nearest $0.50. Values exactly halfway round up.</div>
+            {roundedAmountMessage ? <div>{roundedAmountMessage}</div> : null}
+            {requestMode === "self" ? <div>Enter $0.00 for the free email-link flow, or any higher amount for paid checkout.</div> : null}
+            {isPaidSelf ? <div>After payment authorization, you either go straight to the browser-based live compliment room or wait in line if someone is already being complimented.</div> : null}
+            {isGift ? <div>After payment authorization, you get a shareable link for someone else.</div> : null}
+            {isFree ? <div>Free compliments are for yourself only, limited to one per person, and entered through your emailed link.</div> : null}
+            {requestMode === "self" ? <div>Paid requests may have less wait.</div> : null}
             <div>My camera will be on.</div>
-            <div>{requestType === "gift_paid" ? "The recipient's camera is optional." : "Your camera is optional."}</div>
+            <div>{isGift ? "The recipient's camera is optional." : "Your camera is optional."}</div>
             <div>You can mute your mic or keep your camera off if you want.</div>
             <div>You are only charged if the compliment is successfully delivered.</div>
-            {!isFree ? <div>If the room fails, drops, or ends before completion is marked, you are not charged.</div> : null}
-            {requestType === "gift_paid" ? <div>The gift link only becomes permanently used once the compliment is actually completed.</div> : null}
+            {isPaidFlow ? <div>If the room fails, drops, or ends before completion is marked, you are not charged.</div> : null}
+            {isGift ? <div>The gift link only becomes permanently used once the compliment is actually completed.</div> : null}
           </div>
 
+          {amountValidationMessage ? <div className="banner danger-banner">{amountValidationMessage}</div> : null}
           {selfFlowUnavailable ? <div className="banner danger-banner">{availability.reason || availability.label}</div> : null}
           {selfFlowQueueOpen ? <div className="banner">{availability.reason || `One compliment is already in progress. ${availability.queueCount} / ${availability.queueMax} waiting.`}</div> : null}
-          {requestType === "gift_paid" && !availability.availableNow ? <div className="banner">The live room is unavailable right now, but you can still prepare a gift link for later.</div> : null}
+          {isGift && !availability.availableNow ? <div className="banner">The live room is unavailable right now, but you can still prepare a gift link for later.</div> : null}
           {isFree && !freeComplimentsEnabled ? <div className="banner">Free compliments are not configured on this deployment right now.</div> : null}
 
-          {!isFree ? (
+          {isPaidFlow ? (
             <div className="payment-option-tabs">
               <button type="button" className="retro-button" data-active={provider === "stripe"} onClick={() => !requestId && setProvider("stripe")} disabled={Boolean(requestId)}>
                 Card / Apple Pay / Google Pay
@@ -537,11 +593,16 @@ export function RequestClient({
             </div>
           ) : null}
 
-          {!paypalEnabled && !isFree ? <div className="tiny muted">Venmo is not configured on this deployment. Stripe checkout still works.</div> : null}
+          {!paypalEnabled && isPaidFlow ? <div className="tiny muted">Venmo is not configured on this deployment. Stripe checkout still works.</div> : null}
 
           {!requestId ? (
-            <button type="button" className="retro-button" onClick={prepareRequest} disabled={busy || selfFlowUnavailable || (isFree && !freeComplimentsEnabled)}>
-              {busy ? "Preparing..." : isFree ? "Email my free access link" : "Prepare payment"}
+            <button
+              type="button"
+              className="retro-button"
+              onClick={prepareRequest}
+              disabled={busy || Boolean(amountValidationMessage) || selfFlowUnavailable || (isFree && !freeComplimentsEnabled)}
+            >
+              {busy ? "Preparing..." : isFree ? "Email my access link" : isGift ? "Prepare gift payment" : "Prepare payment"}
             </button>
           ) : (
             <div className="button-row">
@@ -563,7 +624,7 @@ export function RequestClient({
         {errorMessage ? <div className="banner danger-banner">{errorMessage}</div> : null}
         {successMessage ? <div className="banner success-banner">{successMessage}</div> : null}
         <div className="surface stack">
-          <strong>{giftShareUrl ? "Gift link ready" : isFree ? "Free link" : "Payment window"}</strong>
+          <strong>{giftShareUrl ? "Gift link ready" : isFree ? (requestId ? "Email confirmation" : "Email link") : "Payment window"}</strong>
           {giftShareUrl ? (
             <>
               <div className="muted">Copy this link and send it to the person who should receive the compliment.</div>
@@ -576,15 +637,38 @@ export function RequestClient({
               <div className="tiny muted">The link stays usable until a real compliment is actually completed.</div>
             </>
           ) : isFree ? (
-            <div className="muted">Enter your email and we&apos;ll send your secure waiting-room link there. If the line is moving, paid requests always go ahead of free ones.</div>
+            requestId ? (
+              <>
+                <div className="muted">
+                  {freeEmailSent === false
+                    ? "We could not confirm the email delivery for this free request."
+                    : "Check your email for your access link."}
+                </div>
+                <div className="muted">Free compliments use an emailed link for entry.</div>
+                <div className="tiny muted">Paid requests may have less wait.</div>
+                {freeEmailSent === false ? <div className="tiny muted">Start over and try again in a minute if the message does not arrive.</div> : null}
+                {email.trim() ? <div className="tiny muted">Email: {email.trim()}</div> : null}
+              </>
+            ) : (
+              <>
+                <div className="muted">If your amount rounds to $0.00, this turns into the free flow.</div>
+                <div className="tiny muted">Free compliments use an emailed link for entry.</div>
+                <div className="tiny muted">Paid requests may have less wait.</div>
+              </>
+            )
           ) : (
             <>
-              {!requestId ? <div className="muted">Pick an amount, choose who this is for, and prepare a payment method.</div> : null}
+              {!requestId ? (
+                <>
+                  <div className="muted">Pick an amount, and we&apos;ll use the rounded price shown on the left before payment.</div>
+                  {normalizedAmount ? <div className="tiny muted">Current rounded amount: {normalizedAmount.displayAmount}</div> : null}
+                </>
+              ) : null}
               {requestId && provider === "stripe" && clientSecret ? (
                 <Elements stripe={stripePromise} options={{ clientSecret }}>
                   <StripeCheckoutPane
                     requestId={requestId}
-                    customerRequestedVideo={requestType === "self_paid" ? customerRequestedVideo : false}
+                    customerRequestedVideo={requestMode === "self" ? customerRequestedVideo : false}
                     disabled={busy}
                     onSuccess={handleAuthorizedPayment}
                     submitLabel={paymentSubmitLabel}
@@ -596,7 +680,7 @@ export function RequestClient({
                   paypalClientId={paypalClientId}
                   orderId={paypalOrderId}
                   requestId={requestId}
-                  customerRequestedVideo={requestType === "self_paid" ? customerRequestedVideo : false}
+                  customerRequestedVideo={requestMode === "self" ? customerRequestedVideo : false}
                   disabled={busy}
                   onSuccess={handleAuthorizedPayment}
                   submitLabel={isGift

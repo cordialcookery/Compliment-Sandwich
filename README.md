@@ -96,14 +96,15 @@ The app still keeps request, payment, call, and room state separate on purpose:
 
 ## Public flows
 
-### Paid compliment for yourself
+### Get a compliment for yourself
 
-1. Customer picks an amount.
-2. Payment is authorized first.
-3. If the service is idle, the request becomes the active live room.
-4. If another compliment is already live, the request joins the waiting queue.
-5. If the owner marks the compliment completed, the payment captures.
-6. If the room fails, disconnects, expires, or ends first, the authorization is canceled or voided.
+1. Customer enters one amount.
+2. The amount rounds to the nearest $0.50, with halfway values rounding up.
+3. If the rounded amount is $0.00, the request uses the free self flow.
+4. If the rounded amount is $0.50 or more, the request uses the paid self flow.
+5. Paid self requests authorize first, then either become the active live room or join the queue.
+6. If the owner marks the compliment completed, the payment captures.
+7. If the room fails, disconnects, expires, or ends first, the authorization is canceled or voided.
 
 ### Paid gift compliment
 
@@ -117,11 +118,11 @@ The app still keeps request, payment, call, and room state separate on purpose:
 
 ### Free compliment for yourself
 
-1. Customer enters an email address.
-2. The app checks free-use limits and anti-abuse metadata.
-3. No payment attempt is created.
-4. The app either starts the live flow immediately or queues the request behind paid work.
-5. The customer gets an emailed access link plus the in-browser waiting path.
+1. A self-request amount that rounds to $0.00 becomes the free flow.
+2. Customer enters an email address.
+3. The app checks free-use limits and anti-abuse metadata.
+4. No payment attempt is created.
+5. The request can still become active immediately or wait in the same queue, but entry still happens through the emailed link.
 6. The free use is only permanently consumed when the compliment is completed.
 7. Failed, expired, or not-completed free requests do not burn the free use.
 
@@ -151,7 +152,8 @@ Queue promotion happens after:
 ## Waiting room and access links
 
 - Paid self requests keep the current browser waiting-room link.
-- Free self requests get an emailed customer-safe waiting-room link.
+- Free self requests must enter through the emailed customer-safe waiting-room link.
+- Free request submission stays in a confirmation state in-browser instead of opening the room immediately.
 - The waiting-room API calculates the real current position server-side.
 - Active live work counts ahead of queued work.
 - Paid queued requests count ahead of free queued requests.
@@ -252,7 +254,10 @@ The Vitest service tests now cover:
 
 - The public UI stays intentionally simple and retro.
 - The app supports one live compliment session at a time plus a waiting queue of up to 5 requests.
-- Paid requests always go ahead of free requests.
+- The public self-request flow uses one amount input under "Get a compliment".
+- Amounts round to the nearest $0.50, with $0.00 using the free email-link flow.
+- Paid requests may have less wait.
+- Gift compliments remain paid-only.
 - Gift links are only truly consumed on successful completion.
 - Twilio rooms only exist for the active request.
 - When in doubt, the code does not charge the customer.

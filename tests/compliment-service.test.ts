@@ -297,7 +297,7 @@ describe("compliment request lifecycle", () => {
     const harness = buildHarness();
     const activePending = await createPaidPending(harness.service, "self_paid");
     const active = await authorizePaid(harness.service, activePending.id, false);
-    const queuedPending = await createPaidPending(harness.service, "self_paid", 775);
+    const queuedPending = await createPaidPending(harness.service, "self_paid", 800);
     const queued = await authorizePaid(harness.service, queuedPending.id, false);
 
     const queuedBefore = await prisma.complimentRequest.findUniqueOrThrow({

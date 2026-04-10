@@ -99,7 +99,7 @@ export function WaitClient({
           <div className="tiny muted">Twilio rooms are only created for the active compliment.</div>
           <div className="tiny muted">The room will open automatically when it is your turn.</div>
           {isFree ? (
-            <div className="tiny muted">Paid requests always go ahead of free requests.</div>
+            <div className="tiny muted">Paid requests may have less wait.</div>
           ) : (
             <div className="tiny muted">You are not charged just for waiting in line.</div>
           )}

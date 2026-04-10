@@ -15,7 +15,7 @@ import {
 } from "@prisma/client";
 
 import { prisma } from "@/lib/prisma";
-import { validateMinimumAmount } from "@/src/lib/amount";
+import { validatePaidAmountCents } from "@/src/lib/amount";
 import { hashValue } from "@/src/lib/crypto";
 import { getServerEnv } from "@/src/lib/env";
 import { HttpError } from "@/src/lib/http";
@@ -1013,7 +1013,7 @@ export function createComplimentService(overrides: Partial<ServiceDependencies> 
       paymentMethodType: PaymentMethodType;
       requestType: ComplimentRequestType;
     }): Promise<RequestWithAttempts> {
-      validateMinimumAmount(input.amountCents);
+      validatePaidAmountCents(input.amountCents);
       await ensureBootstrapData();
       if (input.requestType === "self_paid") {
         await assertCanAcceptComplimentRequests();
@@ -1466,7 +1466,7 @@ export function createComplimentService(overrides: Partial<ServiceDependencies> 
         state: "queued" as QueueSnapshotState,
         message: isFreeRequest(request)
           ? availability.availableNow
-            ? "You're still in line. Paid requests always go ahead of free compliments."
+            ? "You're still in line. Paid requests may have less wait."
             : availability.reason || "Not available right now, but your free request is still waiting."
           : availability.availableNow || availability.reason === QUEUE_FULL_MESSAGE
             ? "The room will open when it is your turn."

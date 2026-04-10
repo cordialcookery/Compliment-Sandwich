@@ -148,7 +148,7 @@ export async function sendCustomerAccessEmail(input: {
     ? "Price: free"
     : `Amount on hold: ${formatMoney(input.amountCents)}`;
   const priorityLine = input.queuePriority === "free"
-    ? "Paid requests always move ahead of free ones."
+    ? "Paid requests may have less wait."
     : "This request stays in the paid line.";
 
   const text = [

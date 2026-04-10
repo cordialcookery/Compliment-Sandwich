@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 
-import { parseAmountToCents, validateMinimumAmount } from "@/src/lib/amount";
+import { getSelfRequestTypeForAmount, normalizeAmountToIncrement } from "@/src/lib/amount";
 import { getRequestActor } from "@/src/lib/request";
 import { enforceRateLimit } from "@/src/server/services/rate-limit";
 import { complimentService } from "@/src/server/services/compliment-service";
@@ -58,21 +58,27 @@ export async function POST(request: NextRequest) {
           requestType: freeRequest.request.requestType,
           queuePriority: freeRequest.request.queuePriority
         },
-        nextStep: "waiting_room",
-        waitPath: freeRequest.waitPath,
+        nextStep: "email_confirmation",
         message: freeRequest.emailSent
-          ? "Free compliment request created. Check your email for your access link."
-          : "Free compliment request created. We could not confirm the email send, so keep this page open and use the waiting link now.",
+          ? "Check your email for your access link. Free compliments use an emailed link for entry. Paid requests may have less wait."
+          : "We could not confirm the email delivery. Free compliments use an emailed link for entry, so please try again in a minute.",
         emailSent: freeRequest.emailSent
       });
     }
 
-    const amountCents = parseAmountToCents(body.amount);
-    validateMinimumAmount(amountCents);
+    const normalizedAmount = normalizeAmountToIncrement(body.amount);
+
+    if (body.requestType === "gift_paid" && normalizedAmount.amountCents === 0) {
+      throw new Error("Gift compliments require a paid amount.");
+    }
+
+    if (body.requestType === "self_paid" && getSelfRequestTypeForAmount(normalizedAmount.amountCents) === "self_free") {
+      throw new Error("That amount rounds to $0.00. Enter your email to use the free compliment flow.");
+    }
 
     const complimentRequest = await complimentService.createPendingRequest({
       clientRequestId: body.clientRequestId,
-      amountCents,
+      amountCents: normalizedAmount.amountCents,
       customerPhoneRaw: null,
       provider: body.provider,
       paymentMethodType: body.paymentMethodType,
