@@ -11,12 +11,29 @@ const schema = z.object({
 export const dynamic = "force-dynamic";
 
 export async function POST(request: NextRequest) {
-  const body = schema.parse(await request.json());
+  try {
+    const rawBody = await request.json().catch(() => null);
+    const parsed = schema.safeParse(rawBody);
 
-  if (body.password !== getServerEnv().ADMIN_PASSWORD) {
-    return NextResponse.json({ error: "Wrong password." }, { status: 401 });
-  }
+    if (!parsed.success) {
+      return NextResponse.json({ error: "Invalid login request" }, { status: 400 });
+    }
 
-  await createAdminSession();
-  return NextResponse.json({ ok: true });
+    console.log("Entered password:", parsed.data.password);
+console.log("Env password:", getServerEnv().ADMIN_PASSWORD);
+
+if (parsed.data.password !== getServerEnv().ADMIN_PASSWORD) {
+  return NextResponse.json({ error: "Invalid password" }, { status: 401 });
+}
+
+    await createAdminSession();
+return NextResponse.json({ ok: true });
+
+} catch (error) {
+  console.error("Admin login failed.", error);
+  return NextResponse.json(
+    { error: error instanceof Error ? error.message : String(error) },
+    { status: 500 }
+  );
+}
 }

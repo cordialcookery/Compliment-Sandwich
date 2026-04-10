@@ -3,9 +3,20 @@
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 
+async function readResponsePayload(response: Response) {
+  const contentType = response.headers.get("content-type") || "";
+
+  if (contentType.includes("application/json")) {
+    const payload = (await response.json()) as { error?: string };
+    return payload.error || "Login failed.";
+  }
+
+  const text = (await response.text()).trim();
+  return text || "Login failed.";
+}
+
 export function LoginForm() {
   const router = useRouter();
-  const [password, setPassword] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
@@ -14,23 +25,30 @@ export function LoginForm() {
     setSubmitting(true);
     setErrorMessage(null);
 
-    const response = await fetch("/api/admin/login", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json"
-      },
-      body: JSON.stringify({ password })
-    });
+    const formData = new FormData(event.currentTarget);
+    const password = String(formData.get("password") ?? "");
 
-    const payload = await response.json();
-    if (!response.ok) {
+    try {
+      const response = await fetch("/api/admin/login", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify({ password })
+      });
+
+      if (!response.ok) {
+        setErrorMessage(await readResponsePayload(response));
+        return;
+      }
+
+      router.push("/admin");
+      router.refresh();
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : "Login failed.");
+    } finally {
       setSubmitting(false);
-      setErrorMessage(payload.error || "Login failed.");
-      return;
     }
-
-    router.push("/admin");
-    router.refresh();
   }
 
   return (
@@ -40,10 +58,10 @@ export function LoginForm() {
         <label htmlFor="password">Password</label>
         <input
           id="password"
+          name="password"
           type="password"
           className="retro-input"
-          value={password}
-          onChange={(event) => setPassword(event.target.value)}
+          autoComplete="current-password"
           autoFocus
         />
       </div>
