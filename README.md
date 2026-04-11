@@ -9,7 +9,7 @@ Compliment Sandwich is a funny little Windows-95-looking MVP where one live comp
 - Stripe manual capture for cards, Apple Pay, and Google Pay
 - Optional PayPal authorize flow for Venmo
 - Twilio Video rooms for the live browser session
-- Resend for customer access emails and optional owner alerts
+- Resend for customer access emails, optional owner email alerts, and optional Bark owner alerts
 - Vercel-ready app structure with env-based secrets
 
 ## Local setup
@@ -50,12 +50,14 @@ Resend env vars:
 - `RESEND_API_KEY`
 - `ALERT_FROM_EMAIL`
 - `OWNER_ALERT_EMAIL`
+- `OWNER_ALERT_URL`
 
 Notes:
 - Stripe can run without PayPal configured.
 - PayPal and Venmo features require the PayPal env vars.
 - Free compliments require `RESEND_API_KEY` and `ALERT_FROM_EMAIL` because the customer access link is emailed.
-- Owner alerts are optional and only send when `RESEND_API_KEY`, `ALERT_FROM_EMAIL`, and `OWNER_ALERT_EMAIL` are all present.
+- Owner email alerts are optional and only send when `RESEND_API_KEY`, `ALERT_FROM_EMAIL`, and `OWNER_ALERT_EMAIL` are all present.
+- Bark alerts are optional and only send when `OWNER_ALERT_URL` is configured.
 
 ## Request types
 

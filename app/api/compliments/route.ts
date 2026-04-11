@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 
 import { getSelfRequestTypeForAmount, normalizeAmountForRequest } from "@/src/lib/amount";
+import { buildOwnerRequestAlert, sendOwnerAlert } from "@/src/lib/owner-alert";
 import { getRequestActor } from "@/src/lib/request";
 import { enforceRateLimit } from "@/src/server/services/rate-limit";
 import { complimentService } from "@/src/server/services/compliment-service";
@@ -32,6 +33,8 @@ const schema = z.discriminatedUnion("requestType", [
 
 export const dynamic = "force-dynamic";
 
+const ENABLE_ALERTS = true;
+
 export async function POST(request: NextRequest) {
   try {
     const actor = getRequestActor(request);
@@ -49,6 +52,16 @@ export async function POST(request: NextRequest) {
         browserMarker: body.browserMarker,
         userAgent: request.headers.get("user-agent")
       });
+
+      if (ENABLE_ALERTS) {
+        await sendOwnerAlert(
+          buildOwnerRequestAlert({
+            requestType: freeRequest.request.requestType,
+            amountCents: freeRequest.request.amountCents,
+            status: freeRequest.request.status
+          })
+        );
+      }
 
       return NextResponse.json({
         request: {
@@ -84,6 +97,16 @@ export async function POST(request: NextRequest) {
       paymentMethodType: body.paymentMethodType,
       requestType: body.requestType
     });
+
+    if (ENABLE_ALERTS) {
+      await sendOwnerAlert(
+        buildOwnerRequestAlert({
+          requestType: complimentRequest.requestType,
+          amountCents: complimentRequest.amountCents,
+          status: complimentRequest.status
+        })
+      );
+    }
 
     return NextResponse.json({
       request: {
