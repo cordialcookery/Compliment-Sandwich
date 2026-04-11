@@ -368,6 +368,12 @@ export function RequestClient({
         ? `Amount to use: ${normalizedAmount.displayAmount}. Amounts under $0.50 will use the free option.`
         : `Amount to use: ${normalizedAmount.displayAmount}.`
     : null;
+  const currentAmountLabel = normalizedAmount ? formatCurrency(normalizedAmount.amountCents) : null;
+  const howItWorksSteps = isGift
+    ? ["Pick an amount", "Click Prepare payment", "Share the link so they can join later"]
+    : isFree
+      ? ["Pick an amount", "Email your access link", "Join from the link when it is your turn"]
+      : ["Pick an amount", "Click Prepare payment", "Join the live compliment"];
   function handleAmountBlur() {
     const next = getNormalizedAmountState(amount);
     if (next.normalized && next.normalized.amountCents === 0) {
@@ -514,215 +520,227 @@ export function RequestClient({
 
   return (
     <div className="stack">
-      <div className="window-columns">
-      <section className="stack">
-        <p className="muted">
-          I made this to make people happy—and maybe make a dollar or two along the way. It&apos;s just me running it, and I do have to work and sleep sometimes (very inconvenient, I know), so I won&apos;t always be on. But I&apos;m excited to talk to you all.
-        </p>
-        <div className="surface stack">
-          <div className="payment-option-tabs">
-            <button type="button" className="retro-button" data-active={requestMode === "self"} onClick={() => !requestId && setRequestMode("self")} disabled={Boolean(requestId)}>
-              Get a compliment
-            </button>
-            <button type="button" className="retro-button" data-active={requestMode === "gift"} onClick={() => !requestId && setRequestMode("gift")} disabled={Boolean(requestId)}>
-              Send a compliment
-            </button>
-          </div>
-
-          <div className="field-row">
-            <label htmlFor="amount">{isGift ? "How much should the gift compliment cost?" : "How much should the compliment cost?"}</label>
-            <input
-              id="amount"
-              type="text"
-              inputMode="decimal"
-              className="retro-input"
-              value={amount}
-              onChange={(event) => setAmount(event.target.value)}
-              onBlur={handleAmountBlur}
-              disabled={busy || Boolean(requestId)}
-              placeholder="0.00"
-            />
-          </div>
-
-          {requestMode === "self" ? (
-            <label className="check-row">
-              <input
-                type="checkbox"
-                checked={customerRequestedVideo}
-                onChange={(event) => setCustomerRequestedVideo(event.target.checked)}
-                disabled={busy || Boolean(requestId) || selfFlowUnavailable}
-              />
-              I&apos;ll probably join with my camera on
-            </label>
-          ) : null}
-
-          {isFree ? (
-            <div className="field-row">
-              <label htmlFor="free-email">Email for your access link</label>
-              <input
-                id="free-email"
-                type="email"
-                className="retro-input"
-                value={email}
-                onChange={(event) => setEmail(event.target.value)}
-                disabled={busy || Boolean(requestId)}
-                placeholder="you@example.com"
-              />
-            </div>
-          ) : null}
-
-          {isPaidFlow ? (
-            <div className="stack">
-              <div className="payment-method-heading">Payment method</div>
-              <div className="payment-method-grid">
-                <div className="payment-method-card" data-selected={provider === "stripe"}>
-                  <strong>Secure checkout</strong>
-                  <div className="tiny muted">Card details and any available wallet options appear here after preparation.</div>
-                </div>
-                {paypalEnabled ? (
-                  <button
-                    type="button"
-                    className="retro-button"
-                    data-active={provider === "paypal"}
-                    onClick={() => !requestId && setProvider(provider === "paypal" ? "stripe" : "paypal")}
-                    disabled={Boolean(requestId) || busy}
-                  >
-                    {provider === "paypal" ? "Use secure checkout instead" : "Use alternate checkout instead"}
-                  </button>
-                ) : null}
-              </div>
-            </div>
-          ) : null}
-
-          {!paypalEnabled && isPaidFlow ? <div className="tiny muted">Alternate checkout is not configured on this deployment. Secure checkout still works.</div> : null}
-
-          {amountValidationMessage ? <div className="banner danger-banner">{amountValidationMessage}</div> : null}
-          {selfFlowUnavailable ? <div className="banner danger-banner">{availability.reason || availability.label}</div> : null}
-          {selfFlowQueueOpen ? <div className="banner">{availability.reason || `One compliment is already in progress. ${availability.queueCount} / ${availability.queueMax} waiting.`}</div> : null}
-          {isGift && !availability.availableNow ? <div className="banner">The live room is unavailable right now, but you can still prepare a gift link for later.</div> : null}
-          {isFree && !freeComplimentsEnabled ? <div className="banner">Free compliments are not configured on this deployment right now.</div> : null}
-
-          {!requestId ? (
-            <button
-              type="button"
-              className="retro-button"
-              onClick={prepareRequest}
-              disabled={busy || Boolean(amountValidationMessage) || selfFlowUnavailable || (isFree && !freeComplimentsEnabled)}
-            >
-              {busy ? "Preparing..." : isFree ? "Email my access link" : isGift ? "Prepare gift payment" : "Prepare payment"}
-            </button>
-          ) : (
-            <div className="button-row">
-              <button type="button" className="retro-button" onClick={resetPreparation} disabled={busy}>
-                {giftShareUrl ? "Prepare another one" : "Start over"}
+      <div className="window-columns request-columns">
+        <section className="stack request-main-column">
+          <p className="muted request-intro">
+            I made this to make people happy&mdash;and maybe make a dollar or two along the way. It&apos;s just me running it, and I do have to work and sleep sometimes (very inconvenient, I know), so I won&apos;t always be on. But I&apos;m excited to talk to you all.
+          </p>
+          <div className="surface stack request-form-panel">
+            <div className="payment-option-tabs">
+              <button type="button" className="retro-button" data-active={requestMode === "self"} onClick={() => !requestId && setRequestMode("self")} disabled={Boolean(requestId)}>
+                Get a compliment
+              </button>
+              <button type="button" className="retro-button" data-active={requestMode === "gift"} onClick={() => !requestId && setRequestMode("gift")} disabled={Boolean(requestId)}>
+                Send a compliment
               </button>
             </div>
-          )}
 
-          <div className="stack tiny muted">
-            <div>Amounts under $0.50 will use the free option.</div>
-            {amountPreviewMessage ? <div>{amountPreviewMessage}</div> : null}
-            {requestMode === "self" ? <div>Amounts at $0.50 or more stay at the entered amount for paid checkout.</div> : null}
-            {isPaidSelf ? <div>After payment authorization, you either go straight to the browser-based live compliment room or wait in line if someone is already being complimented.</div> : null}
-            {isGift ? <div>After payment authorization, you get a shareable link for someone else.</div> : null}
-            {isFree ? <div>Free compliments are for yourself only, limited to one per person, and entered through your emailed link.</div> : null}
-            {requestMode === "self" ? <div>Paid requests may have less wait.</div> : null}
-            <div>My camera will be on.</div>
-            <div>{isGift ? "The recipient's camera is optional." : "Your camera is optional."}</div>
-            <div>You can mute your mic or keep your camera off if you want.</div>
-            <div>You are only charged if the compliment is successfully delivered.</div>
-            {isPaidFlow ? <div>If the room fails, drops, or ends before completion is marked, you are not charged.</div> : null}
-            {isGift ? <div>The gift link only becomes permanently used once the compliment is actually completed.</div> : null}
-          </div>
-        </div>
-        <div className="tiny muted">
-          Browser privacy note: the live compliment happens inside the app. You can keep your own camera off, mute your mic, and leave at any time.
-        </div>
-        <Link href="/" className="tiny">
-          &larr; back to sandwich
-        </Link>
-      </section>
+            <div className="field-row">
+              <label htmlFor="amount">{isGift ? "How much should the gift compliment cost?" : "How much should the compliment cost?"}</label>
+              <input
+                id="amount"
+                type="text"
+                inputMode="decimal"
+                className="retro-input"
+                value={amount}
+                onChange={(event) => setAmount(event.target.value)}
+                onBlur={handleAmountBlur}
+                disabled={busy || Boolean(requestId)}
+                placeholder="0.00"
+              />
+            </div>
 
-      <section className="stack">
-        {errorMessage ? <div className="banner danger-banner">{errorMessage}</div> : null}
-        {successMessage ? <div className="banner success-banner">{successMessage}</div> : null}
-        <div className="surface stack">
-          <strong>{giftShareUrl ? "Gift link ready" : isFree ? (requestId ? "Email confirmation" : "Email link") : "Payment window"}</strong>
-          {giftShareUrl ? (
-            <>
-              <div className="muted">Copy this link and send it to the person who should receive the compliment.</div>
-              <input className="retro-input" readOnly value={giftShareUrl} aria-label="Gift share link" />
+            {requestMode === "self" ? (
+              <label className="check-row">
+                <input
+                  type="checkbox"
+                  checked={customerRequestedVideo}
+                  onChange={(event) => setCustomerRequestedVideo(event.target.checked)}
+                  disabled={busy || Boolean(requestId) || selfFlowUnavailable}
+                />
+                I&apos;ll probably join with my camera on
+              </label>
+            ) : null}
+
+            {isFree ? (
+              <div className="field-row">
+                <label htmlFor="free-email">Email for your access link</label>
+                <input
+                  id="free-email"
+                  type="email"
+                  className="retro-input"
+                  value={email}
+                  onChange={(event) => setEmail(event.target.value)}
+                  disabled={busy || Boolean(requestId)}
+                  placeholder="you@example.com"
+                />
+              </div>
+            ) : null}
+
+            {isPaidFlow ? (
+              <div className="stack">
+                <div className="payment-method-heading">Payment method</div>
+                <div className="payment-method-grid">
+                  <div className="payment-method-card" data-selected={provider === "stripe"}>
+                    <strong>Secure checkout</strong>
+                    <div className="tiny muted">Card details and any available wallet options appear here after preparation.</div>
+                  </div>
+                  {paypalEnabled ? (
+                    <button
+                      type="button"
+                      className="retro-button"
+                      data-active={provider === "paypal"}
+                      onClick={() => !requestId && setProvider(provider === "paypal" ? "stripe" : "paypal")}
+                      disabled={Boolean(requestId) || busy}
+                    >
+                      {provider === "paypal" ? "Use secure checkout instead" : "Use alternate checkout instead"}
+                    </button>
+                  ) : null}
+                </div>
+              </div>
+            ) : null}
+
+            {!paypalEnabled && isPaidFlow ? <div className="tiny muted">Alternate checkout is not configured on this deployment. Secure checkout still works.</div> : null}
+
+            {amountValidationMessage ? <div className="banner danger-banner">{amountValidationMessage}</div> : null}
+            {selfFlowUnavailable ? <div className="banner danger-banner">{availability.reason || availability.label}</div> : null}
+            {selfFlowQueueOpen ? <div className="banner">{availability.reason || `One compliment is already in progress. ${availability.queueCount} / ${availability.queueMax} waiting.`}</div> : null}
+            {isGift && !availability.availableNow ? <div className="banner">The live room is unavailable right now, but you can still prepare a gift link for later.</div> : null}
+            {isFree && !freeComplimentsEnabled ? <div className="banner">Free compliments are not configured on this deployment right now.</div> : null}
+
+            {!requestId ? (
+              <button
+                type="button"
+                className="retro-button"
+                onClick={prepareRequest}
+                disabled={busy || Boolean(amountValidationMessage) || selfFlowUnavailable || (isFree && !freeComplimentsEnabled)}
+              >
+                {busy ? "Preparing..." : isFree ? "Email my access link" : isGift ? "Prepare gift payment" : "Prepare payment"}
+              </button>
+            ) : (
               <div className="button-row">
-                <button type="button" className="retro-button" onClick={copyGiftLink}>
-                  {copied ? "Copied" : "Copy link"}
+                <button type="button" className="retro-button" onClick={resetPreparation} disabled={busy}>
+                  {giftShareUrl ? "Prepare another one" : "Start over"}
                 </button>
               </div>
-              <div className="tiny muted">The link stays usable until a real compliment is actually completed.</div>
-            </>
-          ) : isFree ? (
-            requestId ? (
+            )}
+
+            <div className="tiny muted">Amounts under $0.50 will use the free option.</div>
+          </div>
+          <div className="tiny muted">
+            Browser privacy note: the live compliment happens inside the app. You can keep your own camera off, mute your mic, and leave at any time.
+          </div>
+          <Link href="/" className="tiny">
+            &larr; back to sandwich
+          </Link>
+        </section>
+
+        <section className="stack request-side-column">
+          {errorMessage ? <div className="banner danger-banner">{errorMessage}</div> : null}
+          {successMessage ? <div className="banner success-banner">{successMessage}</div> : null}
+          <div className="surface stack request-payment-panel">
+            <strong>Payment window</strong>
+            {giftShareUrl ? (
               <>
-                <div className="muted">
-                  {freeEmailSent === false
-                    ? "We could not confirm the email delivery for this free request."
-                    : "Check your email for your access link."}
+                <div className="request-side-title">Gift link ready</div>
+                <div className="muted">Copy this link and send it to the person who should receive the compliment.</div>
+                <input className="retro-input" readOnly value={giftShareUrl} aria-label="Gift share link" />
+                <div className="button-row">
+                  <button type="button" className="retro-button" onClick={copyGiftLink}>
+                    {copied ? "Copied" : "Copy link"}
+                  </button>
                 </div>
-                <div className="muted">Free compliments use an emailed link for entry.</div>
-                <div className="tiny muted">Paid requests may have less wait.</div>
-                {freeEmailSent === false ? <div className="tiny muted">Start over and try again in a minute if the message does not arrive.</div> : null}
-                {email.trim() ? <div className="tiny muted">Email: {email.trim()}</div> : null}
+                <div className="tiny muted">The link stays usable until a real compliment is actually completed.</div>
               </>
+            ) : isFree ? (
+              requestId ? (
+                <>
+                  <div className="request-side-title">Email confirmation</div>
+                  <div className="muted">Free compliments use an emailed link for entry.</div>
+                  <div className="muted">
+                    {freeEmailSent === false
+                      ? "We could not confirm the email delivery for this free request."
+                      : "Check your email for your access link."}
+                  </div>
+                  <div className="tiny muted">Paid requests may have less wait.</div>
+                  {freeEmailSent === false ? <div className="tiny muted">Start over and try again in a minute if the message does not arrive.</div> : null}
+                  {email.trim() ? <div className="tiny muted">Email: {email.trim()}</div> : null}
+                </>
+              ) : (
+                <>
+                  <div className="request-side-title">Email link</div>
+                  <div className="muted">If your amount is under $0.50, this turns into the free flow.</div>
+                  <div className="tiny muted">Free compliments use an emailed link for entry.</div>
+                  <div className="tiny muted">Paid requests may have less wait.</div>
+                </>
+              )
             ) : (
               <>
-                <div className="muted">If your amount is under $0.50, this turns into the free flow.</div>
-                <div className="tiny muted">Free compliments use an emailed link for entry.</div>
-                <div className="tiny muted">Paid requests may have less wait.</div>
-              </>
-            )
-          ) : (
-            <>
-              {!requestId ? (
-                <>
-                  <div className="muted">Pick an amount, then click Prepare payment to load Stripe's real secure checkout UI here.</div>
-                  {normalizedAmount ? <div className="tiny muted">Current amount to use: {normalizedAmount.displayAmount}</div> : null}
-                </>
-              ) : null}
-              {requestId && provider === "stripe" && clientSecret ? (
-                <Elements stripe={stripePromise} options={{ clientSecret }}>
-                  <StripeCheckoutPane
+                {!requestId ? (
+                  <>
+                    <div className="muted">Pick an amount, then click Prepare payment to load the secure checkout here.</div>
+                    {currentAmountLabel ? <div className="tiny muted">Current amount: {currentAmountLabel}</div> : null}
+                  </>
+                ) : null}
+                {requestId && provider === "stripe" && clientSecret ? (
+                  <Elements stripe={stripePromise} options={{ clientSecret }}>
+                    <StripeCheckoutPane
+                      requestId={requestId}
+                      customerRequestedVideo={requestMode === "self" ? customerRequestedVideo : false}
+                      disabled={busy}
+                      onSuccess={handleAuthorizedPayment}
+                      submitLabel={paymentSubmitLabel}
+                    />
+                  </Elements>
+                ) : null}
+                {requestId && provider === "paypal" && paypalEnabled && paypalOrderId && paypalClientId ? (
+                  <PayPalVenmoPane
+                    paypalClientId={paypalClientId}
+                    orderId={paypalOrderId}
                     requestId={requestId}
                     customerRequestedVideo={requestMode === "self" ? customerRequestedVideo : false}
                     disabled={busy}
                     onSuccess={handleAuthorizedPayment}
-                    submitLabel={paymentSubmitLabel}
+                    submitLabel={isGift
+                      ? "This checkout authorizes the gift now, and the charge only captures if the recipient actually gets the compliment later."
+                      : "This checkout authorizes now, and the charge only captures if the compliment is actually completed."}
                   />
-                </Elements>
-              ) : null}
-              {requestId && provider === "paypal" && paypalEnabled && paypalOrderId && paypalClientId ? (
-                <PayPalVenmoPane
-                  paypalClientId={paypalClientId}
-                  orderId={paypalOrderId}
-                  requestId={requestId}
-                  customerRequestedVideo={requestMode === "self" ? customerRequestedVideo : false}
-                  disabled={busy}
-                  onSuccess={handleAuthorizedPayment}
-                  submitLabel={isGift
-                    ? "This checkout authorizes the gift now, and the charge only captures if the recipient actually gets the compliment later."
-                    : "This checkout authorizes now, and the charge only captures if the compliment is actually completed."}
-                />
-              ) : null}
-              {requestId && !clientSecret && provider === "stripe" ? <div className="muted">Loading Stripe...</div> : null}
-              {requestId && provider === "paypal" && paypalEnabled && !paypalOrderId ? <div className="muted">Loading alternate checkout...</div> : null}
-            </>
-          )}
-        </div>
-      </section>
+                ) : null}
+                {requestId && !clientSecret && provider === "stripe" ? <div className="muted">Loading Stripe...</div> : null}
+                {requestId && provider === "paypal" && paypalEnabled && !paypalOrderId ? <div className="muted">Loading alternate checkout...</div> : null}
+              </>
+            )}
+
+            <div className="request-side-blocks">
+              <div className="request-side-block stack">
+                <div className="request-side-title">How it works</div>
+                <ul className="request-side-list tiny muted">
+                  {howItWorksSteps.map((step) => (
+                    <li key={step}>{step}</li>
+                  ))}
+                </ul>
+              </div>
+
+              <div className="request-side-block stack">
+                <div className="request-side-title">Good to know</div>
+                <div className="tiny muted">My camera will be on.</div>
+                <div className="tiny muted">{isGift ? "The recipient's camera is optional." : "Your camera is optional."}</div>
+                <div className="tiny muted">You can mute your mic or keep your camera off if you want.</div>
+                {amountPreviewMessage ? <div className="tiny muted">{amountPreviewMessage}</div> : null}
+                {requestMode === "self" ? <div className="tiny muted">Amounts at $0.50 or more stay at the entered amount for paid checkout.</div> : null}
+                {isPaidSelf ? <div className="tiny muted">After payment authorization, you either go straight to the live compliment room or wait in line if someone is already being complimented.</div> : null}
+                {isGift ? <div className="tiny muted">After payment authorization, you get a shareable link for someone else.</div> : null}
+                {isFree ? <div className="tiny muted">Free compliments are for yourself only, limited to one per person, and entered through your emailed link.</div> : null}
+                {requestMode === "self" ? <div className="tiny muted">Paid requests may have less wait.</div> : null}
+                <div className="tiny muted">You are only charged if the compliment is successfully delivered.</div>
+                {isPaidFlow ? <div className="tiny muted">If the room fails, drops, or ends before completion is marked, you are not charged.</div> : null}
+                {isGift ? <div className="tiny muted">The gift link only becomes permanently used once the compliment is actually completed.</div> : null}
+              </div>
+            </div>
+          </div>
+        </section>
       </div>
-      <div className="tiny muted">Questions or concerns? Cordialcookery@gmail.com
-        
-      </div>
+      <div className="tiny muted request-contact">Questions or concerns? Cordialcookery@gmail.com</div>
     </div>
   );
 }
-
-
