@@ -198,7 +198,7 @@ function StripeCheckoutPane({
         {submitting ? "Authorizing..." : submitLabel}
       </button>
       <div className="tiny muted">
-        Stripe controls the secure card and wallet UI here. Apple Pay and Google Pay only appear if Stripe confirms the browser, device, and domain support them.
+        Stripe controls the secure checkout UI here.
       </div>
     </form>
   );
@@ -222,7 +222,7 @@ function PayPalVenmoPane({
   submitLabel: string;
 }) {
   const containerRef = useRef<HTMLDivElement | null>(null);
-  const [message, setMessage] = useState<string | null>("Loading Venmo button...");
+  const [message, setMessage] = useState<string | null>("Loading alternate checkout...");
 
   useEffect(() => {
     let cancelled = false;
@@ -233,7 +233,7 @@ function PayPalVenmoPane({
       }
 
       containerRef.current.innerHTML = "";
-      setMessage("Loading Venmo button...");
+      setMessage("Loading alternate checkout...");
 
       const paypal = (await loadScript({
         clientId: paypalClientId,
@@ -245,7 +245,7 @@ function PayPalVenmoPane({
 
       if (!paypal?.Buttons) {
         if (!cancelled) {
-          setMessage("PayPal could not load. Try the Stripe option instead.");
+          setMessage("Alternate checkout could not load. Try the secure checkout option instead.");
         }
         return;
       }
@@ -270,14 +270,14 @@ function PayPalVenmoPane({
         },
         onError: (error: unknown) => {
           if (!cancelled) {
-            setMessage(error instanceof Error ? error.message : "Venmo could not finish checkout.");
+            setMessage(error instanceof Error ? error.message : "Alternate checkout could not finish.");
           }
         }
       });
 
       if (!buttons.isEligible()) {
         if (!cancelled) {
-          setMessage("Venmo is not available in this browser or PayPal merchant setup. Use the Stripe option if needed.");
+          setMessage("Alternate checkout is not available here right now. Use the secure checkout option if needed.");
         }
         return;
       }
@@ -377,7 +377,7 @@ export function RequestClient({
 
   const paymentSubmitLabel = isGift
     ? provider === "paypal"
-      ? "Authorize gift with Venmo"
+      ? "Authorize gift payment"
       : "Authorize gift payment"
     : "Request compliment";
 
@@ -428,7 +428,7 @@ export function RequestClient({
       }
 
       if (provider === "paypal" && !paypalEnabled) {
-        throw new Error("Venmo is not configured on this deployment. Use the Stripe option instead.");
+        throw new Error("Alternate checkout is not configured on this deployment. Use the secure checkout option instead.");
       }
 
       const prepared = (await postJson("/api/compliments", {
@@ -513,10 +513,11 @@ export function RequestClient({
   }
 
   return (
-    <div className="window-columns">
+    <div className="stack">
+      <div className="window-columns">
       <section className="stack">
         <p className="muted">
-          Hey, I&apos;m kind of short on cash, and they say you should do what you love and you&apos;ll never work a day in your life... or whatever. So I want to give you a compliment.
+          I made this to make people happy—and maybe make a dollar or two along the way. It&apos;s just me running it, and I do have to work and sleep sometimes (very inconvenient, I know), so I won&apos;t always be on. But I&apos;m excited to talk to you all.
         </p>
         <div className="surface stack">
           <div className="payment-option-tabs">
@@ -570,35 +571,13 @@ export function RequestClient({
             </div>
           ) : null}
 
-          <div className="stack tiny muted">
-            <div>Amounts under $0.50 will use the free option.</div>
-            {amountPreviewMessage ? <div>{amountPreviewMessage}</div> : null}
-            {requestMode === "self" ? <div>Amounts at $0.50 or more stay at the entered amount for paid checkout.</div> : null}
-            {isPaidSelf ? <div>After payment authorization, you either go straight to the browser-based live compliment room or wait in line if someone is already being complimented.</div> : null}
-            {isGift ? <div>After payment authorization, you get a shareable link for someone else.</div> : null}
-            {isFree ? <div>Free compliments are for yourself only, limited to one per person, and entered through your emailed link.</div> : null}
-            {requestMode === "self" ? <div>Paid requests may have less wait.</div> : null}
-            <div>My camera will be on.</div>
-            <div>{isGift ? "The recipient's camera is optional." : "Your camera is optional."}</div>
-            <div>You can mute your mic or keep your camera off if you want.</div>
-            <div>You are only charged if the compliment is successfully delivered.</div>
-            {isPaidFlow ? <div>If the room fails, drops, or ends before completion is marked, you are not charged.</div> : null}
-            {isGift ? <div>The gift link only becomes permanently used once the compliment is actually completed.</div> : null}
-          </div>
-
-          {amountValidationMessage ? <div className="banner danger-banner">{amountValidationMessage}</div> : null}
-          {selfFlowUnavailable ? <div className="banner danger-banner">{availability.reason || availability.label}</div> : null}
-          {selfFlowQueueOpen ? <div className="banner">{availability.reason || `One compliment is already in progress. ${availability.queueCount} / ${availability.queueMax} waiting.`}</div> : null}
-          {isGift && !availability.availableNow ? <div className="banner">The live room is unavailable right now, but you can still prepare a gift link for later.</div> : null}
-          {isFree && !freeComplimentsEnabled ? <div className="banner">Free compliments are not configured on this deployment right now.</div> : null}
-
           {isPaidFlow ? (
             <div className="stack">
               <div className="payment-method-heading">Payment method</div>
               <div className="payment-method-grid">
                 <div className="payment-method-card" data-selected={provider === "stripe"}>
-                  <strong>Stripe checkout</strong>
-                  <div className="tiny muted">Card / Apple Pay / Google Pay</div>
+                  <strong>Secure checkout</strong>
+                  <div className="tiny muted">Card details and any available wallet options appear here after preparation.</div>
                 </div>
                 {paypalEnabled ? (
                   <button
@@ -608,14 +587,20 @@ export function RequestClient({
                     onClick={() => !requestId && setProvider(provider === "paypal" ? "stripe" : "paypal")}
                     disabled={Boolean(requestId) || busy}
                   >
-                    {provider === "paypal" ? "Use Stripe checkout instead" : "Use Venmo instead"}
+                    {provider === "paypal" ? "Use secure checkout instead" : "Use alternate checkout instead"}
                   </button>
                 ) : null}
               </div>
             </div>
           ) : null}
 
-          {!paypalEnabled && isPaidFlow ? <div className="tiny muted">Venmo is not configured on this deployment. Stripe checkout still works.</div> : null}
+          {!paypalEnabled && isPaidFlow ? <div className="tiny muted">Alternate checkout is not configured on this deployment. Secure checkout still works.</div> : null}
+
+          {amountValidationMessage ? <div className="banner danger-banner">{amountValidationMessage}</div> : null}
+          {selfFlowUnavailable ? <div className="banner danger-banner">{availability.reason || availability.label}</div> : null}
+          {selfFlowQueueOpen ? <div className="banner">{availability.reason || `One compliment is already in progress. ${availability.queueCount} / ${availability.queueMax} waiting.`}</div> : null}
+          {isGift && !availability.availableNow ? <div className="banner">The live room is unavailable right now, but you can still prepare a gift link for later.</div> : null}
+          {isFree && !freeComplimentsEnabled ? <div className="banner">Free compliments are not configured on this deployment right now.</div> : null}
 
           {!requestId ? (
             <button
@@ -633,6 +618,22 @@ export function RequestClient({
               </button>
             </div>
           )}
+
+          <div className="stack tiny muted">
+            <div>Amounts under $0.50 will use the free option.</div>
+            {amountPreviewMessage ? <div>{amountPreviewMessage}</div> : null}
+            {requestMode === "self" ? <div>Amounts at $0.50 or more stay at the entered amount for paid checkout.</div> : null}
+            {isPaidSelf ? <div>After payment authorization, you either go straight to the browser-based live compliment room or wait in line if someone is already being complimented.</div> : null}
+            {isGift ? <div>After payment authorization, you get a shareable link for someone else.</div> : null}
+            {isFree ? <div>Free compliments are for yourself only, limited to one per person, and entered through your emailed link.</div> : null}
+            {requestMode === "self" ? <div>Paid requests may have less wait.</div> : null}
+            <div>My camera will be on.</div>
+            <div>{isGift ? "The recipient's camera is optional." : "Your camera is optional."}</div>
+            <div>You can mute your mic or keep your camera off if you want.</div>
+            <div>You are only charged if the compliment is successfully delivered.</div>
+            {isPaidFlow ? <div>If the room fails, drops, or ends before completion is marked, you are not charged.</div> : null}
+            {isGift ? <div>The gift link only becomes permanently used once the compliment is actually completed.</div> : null}
+          </div>
         </div>
         <div className="tiny muted">
           Browser privacy note: the live compliment happens inside the app. You can keep your own camera off, mute your mic, and leave at any time.
@@ -706,16 +707,20 @@ export function RequestClient({
                   disabled={busy}
                   onSuccess={handleAuthorizedPayment}
                   submitLabel={isGift
-                    ? "Venmo authorizes the gift now, and the charge only captures if the recipient actually gets the compliment later."
-                    : "Venmo authorizes now, and the charge only captures if the compliment is actually completed."}
+                    ? "This checkout authorizes the gift now, and the charge only captures if the recipient actually gets the compliment later."
+                    : "This checkout authorizes now, and the charge only captures if the compliment is actually completed."}
                 />
               ) : null}
               {requestId && !clientSecret && provider === "stripe" ? <div className="muted">Loading Stripe...</div> : null}
-              {requestId && provider === "paypal" && paypalEnabled && !paypalOrderId ? <div className="muted">Loading Venmo...</div> : null}
+              {requestId && provider === "paypal" && paypalEnabled && !paypalOrderId ? <div className="muted">Loading alternate checkout...</div> : null}
             </>
           )}
         </div>
       </section>
+      </div>
+      <div className="tiny muted">Questions or concerns? [EMAIL PLACEHOLDER]</div>
     </div>
   );
 }
+
+
