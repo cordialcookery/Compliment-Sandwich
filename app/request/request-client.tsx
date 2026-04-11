@@ -718,7 +718,9 @@ export function RequestClient({
         </div>
       </section>
       </div>
-      <div className="tiny muted">Questions or concerns? [EMAIL PLACEHOLDER]</div>
+      <div className="tiny muted">Questions or concerns? Cordialcookery@gmail.com
+        
+      </div>
     </div>
   );
 }
