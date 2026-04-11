@@ -54,7 +54,7 @@ export async function sendOwnerAlert(input: OwnerAlertInput) {
     });
 
     if (!res.ok) {
-      console.error("Bark alert failed:", res.status);
+      console.error("Bark alert failed:", res.status, await res.text());
     }
   } catch (err) {
     console.error("Bark alert error:", err);
