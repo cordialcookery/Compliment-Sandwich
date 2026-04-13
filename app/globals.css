@@ -402,3 +402,55 @@ select {
   justify-content: space-between;
   gap: 10px;
 }
+
+.request-columns {
+  align-items: start;
+}
+
+.request-columns > section {
+  min-width: 0;
+}
+
+.request-main-column,
+.request-side-column,
+.request-form-panel,
+.request-payment-panel {
+  align-content: start;
+}
+
+.request-intro {
+  max-width: 34rem;
+}
+
+.request-form-panel {
+  gap: 10px;
+}
+
+.request-side-blocks {
+  display: grid;
+  gap: 10px;
+}
+
+.request-side-block {
+  padding: 10px 12px;
+  border: 2px solid var(--panel-shadow);
+  border-top-color: white;
+  border-left-color: white;
+  background: #efefef;
+  box-shadow: inset -2px -2px 0 var(--panel-dark);
+}
+
+.request-side-title {
+  font-weight: 700;
+}
+
+.request-side-list {
+  margin: 0;
+  padding-left: 18px;
+  display: grid;
+  gap: 6px;
+}
+
+.request-contact {
+  padding-top: 4px;
+}

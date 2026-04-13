@@ -4,6 +4,7 @@ import Script from "next/script";
 import "./globals.css";
 
 const GA_MEASUREMENT_ID = process.env.NEXT_PUBLIC_GA_ID ?? "G-63H1LSEPMQ";
+const GOOGLE_ADS_CONVERSION_ID = "AW-18082879334";
 
 export const metadata: Metadata = {
   title: "Compliment Sandwich",
@@ -24,6 +25,7 @@ export default function RootLayout({ children }: Readonly<{ children: React.Reac
             function gtag(){dataLayer.push(arguments);}
             gtag('js', new Date());
             gtag('config', '${GA_MEASUREMENT_ID}');
+            gtag('config', '${GOOGLE_ADS_CONVERSION_ID}');
           `}
         </Script>
       </head>

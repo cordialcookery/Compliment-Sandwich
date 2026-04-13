@@ -25,6 +25,7 @@ import {
   getWaitingLabel,
   type LiveSessionRole
 } from "@/src/lib/live-session";
+import { trackGoogleAdsConversion } from "@/src/lib/gtag";
 
 type TwilioVideoModule = typeof import("twilio-video");
 type ConnectableLocalTrack = LocalAudioTrack | LocalVideoTrack;
@@ -1354,6 +1355,26 @@ function CallPageClientInner({ requestId, role, joinKey }: LiveCallPageClientPro
       roomRef.current.disconnect();
     }
   }, [snapshot]);
+
+  useEffect(() => {
+    if (role !== LIVE_SESSION_CUSTOMER_ROLE || !snapshot) {
+      return;
+    }
+
+    const shouldTrackConversion =
+      snapshot.requestStatus === "completed" &&
+      snapshot.paymentStatus === "captured" &&
+      snapshot.amountCents > 0;
+
+    if (!shouldTrackConversion) {
+      return;
+    }
+
+    trackGoogleAdsConversion({
+      transactionId: snapshot.requestId
+    });
+  }, [role, snapshot]);
+
 
   return (
     <div className="call-layout">
