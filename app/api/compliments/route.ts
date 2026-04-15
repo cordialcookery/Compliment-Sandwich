@@ -2,10 +2,13 @@ import { NextRequest, NextResponse } from "next/server";
 import { z } from "zod";
 
 import { getSelfRequestTypeForAmount, normalizeAmountForRequest } from "@/src/lib/amount";
-import { buildOwnerRequestAlert, sendOwnerAlert } from "@/src/lib/owner-alert";
 import { getRequestActor } from "@/src/lib/request";
+import { normalizeUserNote, USER_NOTE_MAX_LENGTH } from "@/src/lib/user-note";
+import { sendPreparedOwnerNotification } from "@/src/server/alerts/owner-notifications";
 import { enforceRateLimit } from "@/src/server/services/rate-limit";
 import { complimentService } from "@/src/server/services/compliment-service";
+
+const userNoteSchema = z.string().max(USER_NOTE_MAX_LENGTH).optional().nullable();
 
 const schema = z.discriminatedUnion("requestType", [
   z.object({
@@ -13,21 +16,24 @@ const schema = z.discriminatedUnion("requestType", [
     amount: z.union([z.string(), z.number()]),
     provider: z.enum(["stripe", "paypal"]),
     paymentMethodType: z.enum(["card", "apple_pay", "google_pay", "venmo", "unknown"]),
-    clientRequestId: z.string().min(8)
+    clientRequestId: z.string().min(8),
+    userNote: userNoteSchema
   }),
   z.object({
     requestType: z.literal("gift_paid"),
     amount: z.union([z.string(), z.number()]),
     provider: z.enum(["stripe", "paypal"]),
     paymentMethodType: z.enum(["card", "apple_pay", "google_pay", "venmo", "unknown"]),
-    clientRequestId: z.string().min(8)
+    clientRequestId: z.string().min(8),
+    userNote: userNoteSchema
   }),
   z.object({
     requestType: z.literal("self_free"),
     clientRequestId: z.string().min(8),
     email: z.string().email(),
     customerRequestedVideo: z.boolean().optional().default(false),
-    browserMarker: z.string().min(8).optional().nullable()
+    browserMarker: z.string().min(8).optional().nullable(),
+    userNote: userNoteSchema
   })
 ]);
 
@@ -41,6 +47,7 @@ export async function POST(request: NextRequest) {
     await enforceRateLimit("compliments:start", actor);
 
     const body = schema.parse(await request.json());
+    const userNote = normalizeUserNote(body.userNote);
 
     if (body.requestType === "self_free") {
       await enforceRateLimit("compliments:start-free", actor);
@@ -50,17 +57,12 @@ export async function POST(request: NextRequest) {
         customerRequestedVideo: body.customerRequestedVideo,
         actor,
         browserMarker: body.browserMarker,
-        userAgent: request.headers.get("user-agent")
+        userAgent: request.headers.get("user-agent"),
+        publicMessage: userNote
       });
 
       if (ENABLE_ALERTS) {
-        await sendOwnerAlert(
-          buildOwnerRequestAlert({
-            requestType: freeRequest.request.requestType,
-            amountCents: freeRequest.request.amountCents,
-            status: freeRequest.request.status
-          })
-        );
+        await sendPreparedOwnerNotification({ requestId: freeRequest.request.id });
       }
 
       return NextResponse.json({
@@ -95,17 +97,12 @@ export async function POST(request: NextRequest) {
       customerPhoneRaw: null,
       provider: body.provider,
       paymentMethodType: body.paymentMethodType,
-      requestType: body.requestType
+      requestType: body.requestType,
+      publicMessage: userNote
     });
 
     if (ENABLE_ALERTS) {
-      await sendOwnerAlert(
-        buildOwnerRequestAlert({
-          requestType: complimentRequest.requestType,
-          amountCents: complimentRequest.amountCents,
-          status: complimentRequest.status
-        })
-      );
+      await sendPreparedOwnerNotification({ requestId: complimentRequest.id });
     }
 
     return NextResponse.json({

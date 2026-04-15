@@ -34,6 +34,7 @@ type LiveSessionSnapshot = {
   requestId: string;
   amountCents: number;
   requestStatus: string;
+  userNote: string | null;
   failureReason: string | null;
   paymentStatus: string;
   liveSession: {
@@ -1387,6 +1388,12 @@ function CallPageClientInner({ requestId, role, joinKey }: LiveCallPageClientPro
       ) : null}
       {snapshot && (snapshot.requestStatus === "failed" || snapshot.requestStatus === "canceled") ? (
         <div className="banner danger-banner">{snapshot.failureReason || snapshot.liveSession.endedReason || "No charge was made."}</div>
+      ) : null}
+      {role === LIVE_SESSION_OWNER_ROLE && snapshot ? (
+        <div className="user-note-box">
+          <div className="user-note-label">User Note</div>
+          <div className="user-note-text">{snapshot.userNote || "(none)"}</div>
+        </div>
       ) : null}
 
       <section className="surface stack">

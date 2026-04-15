@@ -11,6 +11,7 @@ import {
   getSelfRequestTypeForAmount,
   normalizeAmountForRequest
 } from "@/src/lib/amount";
+import { normalizeUserNote, USER_NOTE_MAX_LENGTH } from "@/src/lib/user-note";
 
 type AvailabilityState = {
   availableNow: boolean;
@@ -319,6 +320,7 @@ export function RequestClient({
   const [provider, setProvider] = useState<"stripe" | "paypal">("stripe");
   const [customerRequestedVideo, setCustomerRequestedVideo] = useState(false);
   const [email, setEmail] = useState("");
+  const [userNote, setUserNote] = useState("");
   const [clientRequestId, setClientRequestId] = useState(createBrowserRequestId);
   const [requestId, setRequestId] = useState<string | null>(null);
   const [clientSecret, setClientSecret] = useState<string | null>(null);
@@ -369,6 +371,7 @@ export function RequestClient({
         : `Amount to use: ${normalizedAmount.displayAmount}.`
     : null;
   const currentAmountLabel = normalizedAmount ? formatCurrency(normalizedAmount.amountCents) : null;
+  const noteCharacterCount = userNote.trim().length;
   const howItWorksSteps = isGift
     ? ["Pick an amount", "Click Prepare payment", "Share the link so they can join later"]
     : isFree
@@ -396,6 +399,8 @@ export function RequestClient({
     setFreeEmailSent(null);
 
     try {
+      const normalizedUserNote = normalizeUserNote(userNote);
+
       if (!normalizedAmount) {
         throw new Error(amountState.error || "Please enter an amount.");
       }
@@ -417,7 +422,8 @@ export function RequestClient({
           clientRequestId,
           email,
           customerRequestedVideo,
-          browserMarker: getFreeBrowserMarker()
+          browserMarker: getFreeBrowserMarker(),
+          userNote: normalizedUserNote
         })) as PreparedRequestResponse;
 
         markFreeAttemptLocally(email);
@@ -442,7 +448,8 @@ export function RequestClient({
         provider,
         paymentMethodType: provider === "paypal" ? "venmo" : "card",
         requestType: isGift ? "gift_paid" : "self_paid",
-        clientRequestId
+        clientRequestId,
+        userNote: normalizedUserNote
       })) as PreparedRequestResponse;
 
       setRequestId(prepared.request.id);
@@ -482,6 +489,7 @@ export function RequestClient({
     setAmount("5.00");
     setCustomerRequestedVideo(false);
     setEmail("");
+    setUserNote("");
   }
 
   async function copyGiftLink() {
@@ -548,6 +556,9 @@ export function RequestClient({
                 disabled={busy || Boolean(requestId)}
                 placeholder="0.00"
               />
+              <div className="tiny muted">
+                Enter 0 for a one-time free compliment {"\u{1F60A}"}
+              </div>
             </div>
 
             {requestMode === "self" ? (
@@ -561,6 +572,21 @@ export function RequestClient({
                 I&apos;ll probably join with my camera on
               </label>
             ) : null}
+
+            <div className="field-row">
+              <label htmlFor="user-note">Optional note</label>
+              <textarea
+                id="user-note"
+                className="retro-input retro-textarea"
+                value={userNote}
+                onChange={(event) => setUserNote(event.target.value)}
+                disabled={busy || Boolean(requestId)}
+                placeholder="Anything you want me to know before the compliment? (optional, 2 sentences max)"
+                maxLength={USER_NOTE_MAX_LENGTH}
+                rows={3}
+              />
+              <div className="tiny muted">{noteCharacterCount}/{USER_NOTE_MAX_LENGTH}</div>
+            </div>
 
             {isFree ? (
               <div className="field-row">

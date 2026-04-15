@@ -33,9 +33,9 @@ import { createLiveAccessToken, createLiveRoom, completeLiveRoom } from "@/src/s
 import { paymentGateways } from "@/src/server/payments";
 import {
   isCustomerEmailDeliveryConfigured,
-  sendCustomerAccessEmail,
-  sendOwnerNewRequestEmail
+  sendCustomerAccessEmail
 } from "@/src/server/alerts/resend-email";
+import { sendRoomCreatedOwnerNotification } from "@/src/server/alerts/owner-notifications";
 import { assertCanAcceptComplimentRequests, getPublicAvailability } from "@/src/server/services/availability";
 import { ACTIVE_REQUEST_STATUSES, MAX_WAITING_QUEUE_SIZE } from "@/src/lib/constants";
 
@@ -113,7 +113,7 @@ const defaultDependencies: ServiceDependencies = {
   completeRoom: completeLiveRoom,
   stripe: paymentGateways.stripe,
   paypal: paymentGateways.paypal,
-  sendOwnerAlert: sendOwnerNewRequestEmail,
+  sendOwnerAlert: sendRoomCreatedOwnerNotification,
   sendCustomerAccessEmail
 };
 
@@ -1012,6 +1012,7 @@ export function createComplimentService(overrides: Partial<ServiceDependencies> 
       provider: PaymentProvider;
       paymentMethodType: PaymentMethodType;
       requestType: ComplimentRequestType;
+      publicMessage?: string | null;
     }): Promise<RequestWithAttempts> {
       validatePaidAmountCents(input.amountCents);
       await ensureBootstrapData();
@@ -1037,6 +1038,7 @@ export function createComplimentService(overrides: Partial<ServiceDependencies> 
             requestType: input.requestType,
             queuePriority: "paid",
             status: "pending",
+            publicMessage: input.publicMessage ?? null,
             paymentAttempts: {
               create: {
                 provider: input.provider,
@@ -1068,6 +1070,7 @@ export function createComplimentService(overrides: Partial<ServiceDependencies> 
       actor: string;
       browserMarker?: string | null;
       userAgent?: string | null;
+      publicMessage?: string | null;
     }): Promise<FreeRequestCreationResult> {
       await ensureBootstrapData();
       await assertCanAcceptComplimentRequests();
@@ -1146,6 +1149,7 @@ export function createComplimentService(overrides: Partial<ServiceDependencies> 
             requesterIpHash,
             browserMarkerHash,
             userAgentHash,
+            publicMessage: input.publicMessage ?? null,
             paymentMethodType: "unknown"
           },
           include: requestInclude
@@ -1758,6 +1762,7 @@ export function createComplimentService(overrides: Partial<ServiceDependencies> 
         amountCents: request.amountCents,
         requestStatus: request.status,
         requestType: request.requestType,
+        userNote: input.role === LIVE_SESSION_OWNER_ROLE ? request.publicMessage : null,
         failureReason: request.failureReason,
         paymentStatus: getPaymentStatusLabel(request),
         liveSession: {

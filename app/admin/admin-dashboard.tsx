@@ -31,6 +31,7 @@ type RequestSummary = {
   requestType: "self_paid" | "gift_paid" | "self_free";
   queuePriority: "paid" | "free";
   customerEmail?: string | null;
+  publicMessage?: string | null;
   freeUseConsumedAt?: string | null;
   giftRedemptionStatus?: string;
   queuePosition?: number;
@@ -189,6 +190,10 @@ export function AdminDashboard({ initialData }: { initialData: DashboardData }) 
               <div>Free slot consumed: {data.activeRequest.freeUseConsumedAt ? "yes" : "no"}</div>
               <div>Live room: {data.activeRequest.liveSession?.status || "not created"}</div>
               <div>Customer media: {describeCustomerMedia(data.activeRequest.liveSession)}</div>
+              <div className="user-note-box">
+                <div className="user-note-label">User Note</div>
+                <div className="user-note-text">{data.activeRequest.publicMessage || "(none)"}</div>
+              </div>
               <div className="button-row">
                 {data.activeRequest.liveSession ? <Link href={`/admin/live/${data.activeRequest.id}`} className="retro-button link-button">Join live session</Link> : null}
                 <button type="button" className="retro-button" onClick={() => runAction(`/api/admin/requests/${data.activeRequest?.id}/complete`)} disabled={busyAction === `/api/admin/requests/${data.activeRequest?.id}/complete`}>
@@ -227,7 +232,7 @@ export function AdminDashboard({ initialData }: { initialData: DashboardData }) 
                   {data.queuedRequests.map((request) => (
                     <tr key={request.id}>
                       <td>#{request.queuePosition ?? "?"}</td>
-                      <td>{prettyRequestType(request.requestType)}</td>
+                      <td>{prettyRequestType(request.requestType)}{request.publicMessage ? <span className="note-indicator"> [note]</span> : null}</td>
                       <td>{request.queuePriority}</td>
                       <td>{request.customerEmail || "n/a"}</td>
                       <td>{request.requestType === "self_free" ? "free" : formatMoney(request.amountCents)}</td>
@@ -271,7 +276,7 @@ export function AdminDashboard({ initialData }: { initialData: DashboardData }) 
                 {data.recentRequests.map((request) => (
                   <tr key={request.id}>
                     <td>{request.createdAt ? new Date(request.createdAt).toLocaleString() : "n/a"}</td>
-                    <td>{prettyRequestType(request.requestType)}</td>
+                    <td>{prettyRequestType(request.requestType)}{request.publicMessage ? <span className="note-indicator"> [note]</span> : null}</td>
                     <td>{request.queuePriority}</td>
                     <td>{request.customerEmail || "n/a"}</td>
                     <td>{request.requestType === "self_free" ? "free" : formatMoney(request.amountCents)}</td>
