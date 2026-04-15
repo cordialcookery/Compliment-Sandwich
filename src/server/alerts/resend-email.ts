@@ -3,6 +3,11 @@ import "server-only";
 import { Resend } from "resend";
 
 import { prisma } from "@/lib/prisma";
+import {
+  formatOwnerRequestAmount,
+  formatOwnerRequestKind,
+  formatOwnerRequestNote
+} from "@/src/lib/owner-alert";
 import { getEmailEnv } from "@/src/lib/env";
 
 let resendClient: Resend | null = null;
@@ -59,7 +64,9 @@ export async function sendOwnerNewRequestEmail(input: {
     select: {
       amountCents: true,
       id: true,
-      ownerAlertSentAt: true
+      publicMessage: true,
+      ownerAlertSentAt: true,
+      requestType: true
     }
   });
 
@@ -82,7 +89,12 @@ export async function sendOwnerNewRequestEmail(input: {
   const subject = "New compliment request";
   const text = [
     "A new compliment request is ready.",
-    `Amount: ${formatMoney(request.amountCents)}`,
+    `Type: ${formatOwnerRequestKind(request.requestType)}`,
+    `Amount: ${formatOwnerRequestAmount(request.requestType, request.amountCents)}`,
+    "",
+    "\u{1F4DD} NOTE FROM USER:",
+    formatOwnerRequestNote(request.publicMessage),
+    "",
     `Request ID: ${request.id}`,
     `Admin dashboard: ${adminUrl}`
   ].join("\n");

@@ -2,33 +2,7 @@ import "server-only";
 
 import { prisma } from "@/lib/prisma";
 import { buildOwnerLifecycleAlert, sendOwnerAlert } from "@/src/lib/owner-alert";
-import { sendOwnerLifecycleEmail } from "@/src/server/alerts/resend-email";
-
-async function sendChannels(input: {
-  requestId: string;
-  title: string;
-  body: string;
-  url: string;
-  emailSubject: string;
-  emailText: string;
-}) {
-  const emailResult = await sendOwnerLifecycleEmail({
-    requestId: input.requestId,
-    subject: input.emailSubject,
-    text: input.emailText
-  });
-  const barkSent = await sendOwnerAlert({
-    title: input.title,
-    body: input.body,
-    url: input.url
-  });
-
-  return {
-    sent: emailResult.sent || barkSent,
-    barkSent,
-    emailSent: emailResult.sent
-  };
-}
+import { sendOwnerNewRequestEmail } from "@/src/server/alerts/resend-email";
 
 export async function sendPreparedOwnerNotification(input: { requestId: string }) {
   const request = await prisma.complimentRequest.findUnique({
@@ -59,21 +33,21 @@ export async function sendPreparedOwnerNotification(input: { requestId: string }
     occurredAt: request.createdAt
   });
 
-  const result = await sendChannels({
+  const emailResult = await sendOwnerNewRequestEmail({
     requestId: request.id,
-    ...alert
+    amountCents: request.amountCents
+  });
+  const barkSent = await sendOwnerAlert({
+    title: alert.title,
+    body: alert.body,
+    url: alert.url
   });
 
-  if (result.sent) {
-    await prisma.complimentRequest.update({
-      where: { id: request.id },
-      data: {
-        ownerAlertSentAt: new Date()
-      }
-    });
-  }
-
-  return result;
+  return {
+    sent: emailResult.sent || barkSent,
+    barkSent,
+    emailSent: emailResult.sent
+  };
 }
 
 export async function sendRoomCreatedOwnerNotification(input: { requestId: string; amountCents: number }) {
@@ -99,8 +73,15 @@ export async function sendRoomCreatedOwnerNotification(input: { requestId: strin
     occurredAt: new Date()
   });
 
-  return sendChannels({
-    requestId: request.id,
-    ...alert
+  const barkSent = await sendOwnerAlert({
+    title: alert.title,
+    body: alert.body,
+    url: alert.url
   });
+
+  return {
+    sent: barkSent,
+    barkSent,
+    emailSent: false as const
+  };
 }
